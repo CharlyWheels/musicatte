@@ -13,11 +13,22 @@ export const scoreService = {
     })
     return data
   },
+  async get(scoreId, token) {
+    const { data } = await api.get(`/api/scores/${scoreId}`, {
+      headers: authHeaders(token),
+    })
+    return data
+  },
   async listMine(token, page = 1, pageSize = 20) {
     const { data } = await api.get(
       `/api/scores?mine=true&page=${page}&page_size=${pageSize}`,
       { headers: authHeaders(token) },
     )
     return data
+  },
+  async remove(scoreId, token) {
+    await api.delete(`/api/scores/${scoreId}`, {
+      headers: authHeaders(token),
+    })
   },
 }

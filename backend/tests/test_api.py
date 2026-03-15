@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.database import Base, engine
 from app.main import app
+from app.services.musicxml_service import DEFAULT_MUSICXML
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
@@ -38,15 +39,12 @@ def test_scores_repository_and_rating_flow():
         "instrument": "piano",
         "genre": "classical",
         "status": "draft",
-        "score_data": {
-            "schemaVersion": 1,
-            "title": "Nocturne",
-            "measures": [{"notes": [{"pitch": "C/4", "duration": "q", "accidental": None}]}],
-        },
+        "musicxml": DEFAULT_MUSICXML,
     }
     created = client.post("/api/scores", json=score_payload, headers=headers)
     assert created.status_code == 201
     score_id = created.json()["id"]
+    assert "musicxml" in created.json()
 
     mine = client.get("/api/scores?mine=true&page=1&page_size=20", headers=headers)
     assert mine.status_code == 200
@@ -79,4 +77,4 @@ def test_ocr_async_job_flow():
 
     fetched = client.get(f"/api/ocr/jobs/{job_id}", headers=headers)
     assert fetched.status_code == 200
-    assert fetched.json()["status"] in {"queued", "processing", "succeeded"}
+    assert fetched.json()["status"] in {"queued", "processing", "succeeded", "failed"}

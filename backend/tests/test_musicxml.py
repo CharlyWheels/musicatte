@@ -1,6 +1,7 @@
-from app.services.musicxml_service import score_to_musicxml
+from app.services.musicxml_service import DEFAULT_MUSICXML
 
 
-def test_score_to_musicxml_contains_title():
-    xml = score_to_musicxml({"title": "Prelude"})
-    assert "<work-title>Prelude</work-title>" in xml
+def test_default_musicxml_is_valid():
+    assert "<score-partwise" in DEFAULT_MUSICXML
+    assert "<work-title>Nueva partitura</work-title>" in DEFAULT_MUSICXML
+    assert "<measure" in DEFAULT_MUSICXML

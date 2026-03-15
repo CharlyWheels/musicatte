@@ -16,6 +16,20 @@ services:
       timeout: 3s
       retries: 10
 
+  homr:
+    build:
+      context: .
+      dockerfile: homr.Dockerfile
+    container_name: musicatte-homr
+    ports:
+      - "8080:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   backend:
     build:
       context: ./backend
@@ -24,12 +38,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      homr:
+        condition: service_healthy
     environment:
       APP_NAME: Musicatte API
       DATABASE_URL: postgresql+psycopg://musicatte:musicatte@db:5432/musicatte
       JWT_SECRET: dev-secret-change-in-production-32chars
       ACCESS_TOKEN_MINUTES: 1440
       MAX_UPLOAD_BYTES: 8388608
+      HOMR_URL: http://homr:8000
     ports:
       - "8000:8000"
     volumes:

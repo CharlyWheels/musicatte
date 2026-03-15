@@ -33,8 +33,8 @@ async def create_job(
     db: Session = Depends(get_db),
 ):
     _ = current_user
-    if image.content_type not in {"image/png", "image/jpeg", "image/jpg", "image/webp"}:
-        raise HTTPException(status_code=400, detail="Unsupported image type")
+    if image.content_type not in {"image/png", "image/jpeg", "image/jpg", "application/pdf"}:
+        raise HTTPException(status_code=400, detail="Only PNG/JPG images and PDF files are supported")
     payload = await image.read()
     if len(payload) > settings.max_upload_bytes:
         raise HTTPException(status_code=400, detail="File too large")
@@ -49,7 +49,7 @@ async def create_job(
     db.commit()
     db.refresh(job)
     background_tasks.add_task(_process_job_in_fresh_session, job.id)
-    return job
+    return OcrJobOut.from_job(job)
 
 
 @router.get("/jobs/{job_id}", response_model=OcrJobOut)
@@ -62,4 +62,4 @@ def get_job(
     job = db.get(OcrJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="OCR job not found")
-    return job
+    return OcrJobOut.from_job(job)

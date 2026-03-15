@@ -5,6 +5,7 @@ pydantic[email]
 python-multipart
 PyJWT
 passlib
-pytest
 httpx
+pytest
 psycopg[binary]
+PyMuPDF

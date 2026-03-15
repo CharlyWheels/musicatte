@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user
+from ..models.rating import Rating
 from ..models.score import Score
 from ..models.user import User
 from ..schemas.score import ScoreCreate, ScoreOut, ScoreUpdate
-from ..services.musicxml_service import score_to_musicxml
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
 
@@ -14,6 +15,18 @@ router = APIRouter(prefix="/api/scores", tags=["scores"])
 def _ensure_owner(score: Score, user: User):
     if score.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
+
+
+def _avg_rating(db: Session, score_id: int) -> float:
+    avg = db.query(sqlfunc.avg(Rating.value)).filter(Rating.score_id == score_id).scalar()
+    return float(avg) if avg else 0.0
+
+
+def _score_out(db: Session, score: Score) -> ScoreOut:
+    return ScoreOut(
+        **{c.name: getattr(score, c.name) for c in score.__table__.columns},
+        avg_rating=_avg_rating(db, score.id),
+    )
 
 
 @router.post("", response_model=ScoreOut, status_code=status.HTTP_201_CREATED)
@@ -25,12 +38,11 @@ def create_score(
     score = Score(
         **payload.model_dump(),
         user_id=current_user.id,
-        musicxml=score_to_musicxml(payload.score_data),
     )
     db.add(score)
     db.commit()
     db.refresh(score)
-    return ScoreOut(**score.__dict__, avg_rating=0)
+    return _score_out(db, score)
 
 
 @router.get("/{score_id}", response_model=ScoreOut)
@@ -43,7 +55,7 @@ def get_score(
     if not score:
         raise HTTPException(status_code=404, detail="Score not found")
     _ensure_owner(score, current_user)
-    return ScoreOut(**score.__dict__, avg_rating=0)
+    return _score_out(db, score)
 
 
 @router.put("/{score_id}", response_model=ScoreOut)
@@ -60,10 +72,9 @@ def update_score(
     for key, value in payload.model_dump().items():
         setattr(score, key, value)
     score.version = score.version + 1
-    score.musicxml = score_to_musicxml(score.score_data)
     db.commit()
     db.refresh(score)
-    return ScoreOut(**score.__dict__, avg_rating=0)
+    return _score_out(db, score)
 
 
 @router.delete("/{score_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -100,7 +111,7 @@ def list_scores(
         .all()
     )
     return {
-        "items": [ScoreOut(**item.__dict__, avg_rating=0).model_dump() for item in items],
+        "items": [_score_out(db, item).model_dump() for item in items],
         "page": page,
         "page_size": page_size,
         "total": total,

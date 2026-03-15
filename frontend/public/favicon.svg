@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4f46e5"/>
+      <stop offset="100%" style="stop-color:#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Music note symbol -->
+  <g transform="translate(128, 72) scale(0.5)">
+    <!-- Staff lines -->
+    <line x1="40" y1="220" x2="470" y2="220" stroke="white" stroke-width="6" opacity="0.3"/>
+    <line x1="40" y1="270" x2="470" y2="270" stroke="white" stroke-width="6" opacity="0.3"/>
+    <line x1="40" y1="320" x2="470" y2="320" stroke="white" stroke-width="6" opacity="0.3"/>
+    <line x1="40" y1="370" x2="470" y2="370" stroke="white" stroke-width="6" opacity="0.3"/>
+    <line x1="40" y1="420" x2="470" y2="420" stroke="white" stroke-width="6" opacity="0.3"/>
+    <!-- Two eighth notes with beam -->
+    <!-- Note 1 stem -->
+    <line x1="195" y1="155" x2="195" y2="370" stroke="white" stroke-width="12" stroke-linecap="round"/>
+    <!-- Note 1 head -->
+    <ellipse cx="175" cy="370" rx="38" ry="28" fill="white" transform="rotate(-15, 175, 370)"/>
+    <!-- Note 2 stem -->
+    <line x1="345" y1="155" x2="345" y2="320" stroke="white" stroke-width="12" stroke-linecap="round"/>
+    <!-- Note 2 head -->
+    <ellipse cx="325" cy="320" rx="38" ry="28" fill="white" transform="rotate(-15, 325, 320)"/>
+    <!-- Beam connecting -->
+    <polygon points="189,155 351,155 351,185 189,185" fill="white"/>
+  </g>
+  <!-- M letter subtly at bottom -->
+  <text x="256" y="462" text-anchor="middle" font-family="system-ui, sans-serif" font-weight="800" font-size="80" fill="white" opacity="0.9">M</text>
+</svg>

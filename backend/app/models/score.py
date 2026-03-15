@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -12,8 +12,7 @@ class Score(Base):
     composer = Column(String(255), nullable=True)
     instrument = Column(String(100), nullable=False, default="piano")
     genre = Column(String(100), nullable=False, default="general")
-    score_data = Column(JSON, nullable=False)
-    musicxml = Column(Text, nullable=True)
+    musicxml = Column(Text, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     version = Column(Integer, nullable=False, default=1)
     status = Column(String(20), nullable=False, default="draft")

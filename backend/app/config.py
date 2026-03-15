@@ -10,6 +10,7 @@ class Settings(BaseModel):
     access_token_minutes: int = int(os.getenv("ACCESS_TOKEN_MINUTES", str(60 * 24)))
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./musicatte.db")
     max_upload_bytes: int = int(os.getenv("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
+    homr_url: str = os.getenv("HOMR_URL", "http://localhost:8080")
 
 
 settings = Settings()

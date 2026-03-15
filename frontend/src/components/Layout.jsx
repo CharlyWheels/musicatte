@@ -5,7 +5,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Navbar />
-      <main className="mx-auto max-w-6xl px-4 pb-24 pt-6 md:pb-6">
+      <main className="mx-auto max-w-6xl px-4 pb-28 pt-6 md:pb-8">
         <Outlet />
       </main>
     </div>
