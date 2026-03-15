@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: musicatte-db
+    environment:
+      POSTGRES_DB: musicatte
+      POSTGRES_USER: musicatte
+      POSTGRES_PASSWORD: musicatte
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U musicatte -d musicatte"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: musicatte-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_NAME: Musicatte API
+      DATABASE_URL: postgresql+psycopg://musicatte:musicatte@db:5432/musicatte
+      JWT_SECRET: dev-secret-change-in-production-32chars
+      ACCESS_TOKEN_MINUTES: 1440
+      MAX_UPLOAD_BYTES: 8388608
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: musicatte-frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+  backend_uploads:
