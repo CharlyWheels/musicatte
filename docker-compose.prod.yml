@@ -49,9 +49,22 @@ services:
       HOMR_URL: http://homr:8000
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8010}:8000"
     volumes:
       - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://api.musicatte.com}
+    container_name: musicatte-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8020}:80"
 
 volumes:
   postgres_data:
