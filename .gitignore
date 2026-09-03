@@ -31,3 +31,6 @@ Thumbs.db
 # Local end-to-end run artifacts
 backend/e2e.db
 frontend/dist-e2e/
+
+# Never track dependencies, wherever they are installed
+node_modules/
