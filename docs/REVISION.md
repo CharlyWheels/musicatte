@@ -1,5 +1,13 @@
 # Revisión técnica de Musicatte
 
+> **Estado: resuelto.** Esta revisión se hizo sobre el commit `0842b7a` y todo lo que
+> describe está arreglado en los commits que la siguen. Se conserva porque explica *por qué*
+> el código es como es ahora: si vas a tocar el pipeline de reconocimiento o el núcleo del
+> editor, lee primero el apartado correspondiente aquí.
+>
+> Al final hay un [registro de lo aplicado](#lo-que-se-hizo) y
+> [lo que sigue pendiente](#lo-que-queda).
+
 Revisión sobre el commit `0842b7a`. Los fallos marcados **[verificado]** se comprobaron
 ejecutando el código del repositorio contra Verovio 6.3, incluida una prueba con un sistema
 de dos pentagramas y el volcado del MEI que genera el motor. El resto son lecturas directas
@@ -321,3 +329,106 @@ PDF y MIDI.
 **Fase 5 — Un solo flujo y un repositorio que funcione (2 semanas).** Unificar Capturar →
 Revisar → Editar → Compartir con pasos visibles. Rutas estables y etiquetas fijas. Lectura
 pública de partituras publicadas con página de detalle, descarga y copia al editor propio.
+
+
+---
+
+## Lo que se hizo
+
+Todo lo anterior está aplicado. Un resumen de las decisiones que conviene conocer, y de los
+fallos que solo aparecieron al construir el arreglo.
+
+### Decisiones
+
+**MEI dentro, MusicXML en los bordes.** MEI es el formato nativo de Verovio y el único que
+entiende su modelo de edición, así que es el que guardan el editor y la base de datos
+(`scores.score_data`, con `score_format` diciendo qué es). Exportar MusicXML es una
+conversión real, con music21, en el servidor.
+
+**El recorte, no el escalado, es la palanca de precisión.** HOMR reescala toda entrada a
+1920 px de ancho, así que un escalado uniforme se deshace: multiplica por igual la separación
+del pentagrama y el ancho de página. Lo que sí cambia el tamaño efectivo del pentagrama es
+recortar al contenido. Una primera versión del preprocesado normalizaba la escala a una
+separación objetivo; HOMR lo anulaba entero.
+
+**Cola en la base de datos, no un broker.** El reconocimiento vive en la tabla `ocr_jobs`
+con `claimed_at` y `attempts`. Eso da durabilidad, reintentos y poder escalar el worker sin
+añadir infraestructura. Un broker dedicado (Redis con arq o RQ) es mejor cuando hagan falta
+sus funciones de planificación o reparto entre servicios, no por durabilidad, que ya está.
+
+**Menos heurística, más confirmación.** El corte en piezas se propone a partir de barras
+finales y cambios en el número de pentagramas, y lo confirma el usuario sobre las páginas.
+Un corte automático equivocado es peor que ninguno.
+
+### Fallos que aparecieron construyendo el arreglo
+
+Ninguno de estos estaba en la revisión: salieron al probar contra el motor real, en un
+navegador real y mirando las imágenes que recibe el reconocedor.
+
+1. **Las cabezas de nota salían huecas.** El umbral adaptativo usaba una ventana del tamaño
+   de una cabeza de nota, así que su interior se medía contra una media que la propia cabeza
+   dominaba y se descartaba. Para el reconocedor una cabeza hueca es una blanca: cada negra
+   de cada foto se leía con el doble de duración, en silencio y sin que nada en el resultado
+   pareciera raro. Ahora es Otsu, que es lo correcto porque el aplanado de iluminación ya ha
+   quitado el gradiente que justificaba el umbral adaptativo. Hay pruebas que miden la tinta
+   dentro de la huella de cada cabeza.
+
+2. **Un compás vacío no se podía rellenar.** Un compás nuevo llega con un silencio de compás
+   completo, que cuenta como compás lleno al comprobar el ritmo — así que añadir una nota se
+   rechazaba y un compás recién añadido no admitía ninguna nota nunca.
+
+3. **El área sensible de una nota eran dos píxeles de tinta.** Un glifo de nota es pequeño y
+   la plica es un pelo, así que exigir un impacto directo hacía que la mayoría de los clics
+   no seleccionaran nada. Inutilizable con el dedo y molesto con el ratón. Ahora se toma la
+   nota más próxima al punto, y el pentagrama tiene alcance por arriba y por abajo, que es
+   donde van las notas con líneas adicionales.
+
+4. **Mayús+clic añadía y quitaba en el mismo gesto**, porque `pointerdown` y `click` actuaban
+   los dos sobre la misma pulsación. Ampliar una selección era imposible, y con ello las
+   ligaduras, el barrado y los tresillos.
+
+5. **Verovio no emite `data-n`.** El número de compás se deducía de la posición en el SVG, y
+   como cada página es un SVG aparte y solo se dibujan las visibles, el primer compás de la
+   página 2 se numeraba como el 1. Ahora viajan identificadores MEI.
+
+6. **El signo del deskew estaba invertido** en la primera versión del estimador por perfil de
+   proyección, así que cada pasada de refinamiento torcía más la página. Y la máscara
+   morfológica horizontal que preparaba la medición borraba justamente las líneas inclinadas
+   que había que medir.
+
+7. **El motor se usaba después de destruirlo** al salir del editor, por un `ResizeObserver`
+   que llegaba tarde.
+
+8. **`[*|id="…"]` no funciona en todos los motores de selectores** (jsdom lo rechaza), así
+   que buscar un elemento por `xml:id` devolvía `null` y toda edición era una operación
+   nula. Ahora hay un índice.
+
+### Cómo está cubierto
+
+| | |
+|---|---|
+| `backend/tests/` | 101 pruebas: autorización, preprocesado contra páginas sintéticas de respuesta conocida, validación musical, fusión de páginas, cola |
+| `frontend/src/editor/*.test.js` | 103 pruebas, incluidas 17 de integración que cargan cada tipo de documento editado en el Verovio real |
+| `e2e/journey.js` | 25 comprobaciones en navegador: alta, entrada de notas por clic, edición, guardado, publicación, lectura pública y descarga |
+
+Las pruebas de integración existen porque un documento puede tener una forma plausible y que
+el motor lo rechace igualmente: es la clase de fallo que producía la edición por cadenas.
+
+## Lo que queda
+
+Nada de la revisión, pero sí cosas que se decidieron dejar fuera:
+
+- **Sin migraciones de verdad.** `ensure_schema()` añade columnas y hace un relleno, y nada
+  más. Hay que adoptar Alembic antes del primer cambio de esquema que eso no exprese
+  (renombrar preservando datos, cambiar tipos, constraints).
+- **El PDF sale por el diálogo de impresión del navegador**, no por un generador propio.
+  Funciona y no añade dependencias, pero no permite control fino de la paginación.
+- **La reproducción es un tono simple.** Suficiente para verificar alturas y ritmo, que es a
+  lo que sirve; no es una maqueta con instrumentos, que exigiría un banco de sonidos de
+  varios megas.
+- **El reconocimiento no se prueba de punta a punta en CI**: necesita el contenedor de HOMR
+  con sus modelos y un par de minutos por página. Lo que sí se prueba es el preprocesado y la
+  validación, que son lo que decide si el reconocimiento acierta.
+- **Sin entrada por teclado MIDI.** Está la entrada por letras (A–G) y por clic a la altura.
+- **Sin GPU.** El Dockerfile de HOMR detecta CUDA/ROCm si están, pero no hay una variante de
+  imagen preparada para ello.
