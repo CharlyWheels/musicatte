@@ -29,6 +29,18 @@ const NEAR_RADIUS_PX = 18
 // How far above or below a staff a click still counts as aimed at it, so
 // ledger-line notes and imprecise aim both work.
 const STAFF_REACH_PX = 90
+// How long a finger must rest on a note before the gesture becomes a pitch
+// drag rather than a scroll.
+const LONG_PRESS_MS = 220
+// How far a finger may wander in that time and still count as resting.
+const TOUCH_SLOP_PX = 9
+
+function touchDistance(touches) {
+  return Math.hypot(
+    touches[0].clientX - touches[1].clientX,
+    touches[0].clientY - touches[1].clientY,
+  )
+}
 
 export default function ScoreView({
   engine,
@@ -42,6 +54,7 @@ export default function ScoreView({
   insertMode = false,
   flaggedMeasureIds = [],
   onLayoutChange,
+  onZoom,
   className = '',
 }) {
   const containerRef = useRef(null)
@@ -50,6 +63,9 @@ export default function ScoreView({
   // Which note this pointer gesture already selected, so the click that
   // follows does not act on it a second time.
   const gestureRef = useRef(null)
+  const touchRef = useRef(null)
+  const pinchRef = useRef(null)
+  const [dragging, setDragging] = useState(false)
   const [revealed, setRevealed] = useState(() => new Set())
   const pageCount = engine?.pageCount || 0
 
@@ -324,6 +340,9 @@ export default function ScoreView({
   const handlePointerDown = useCallback(
     (event) => {
       if (insertMode || event.button !== 0) return
+      // Touch has its own handling: a press-and-hold, so scrolling still
+      // works. Letting this run too would start a drag on first contact.
+      if (event.pointerType === 'touch') return
       const scope =
         event.target.closest?.('g[data-class="staff"]') ||
         event.target.closest?.('g[data-class="measure"]')
@@ -347,9 +366,16 @@ export default function ScoreView({
     [beginDrag, eventTargetFrom, insertMode, nearestEventTo, onSelect, selection],
   )
 
+  useEffect(() => () => {
+    if (touchRef.current?.timer) window.clearTimeout(touchRef.current.timer)
+  }, [])
+
   useEffect(() => {
     if (!containerRef.current) return undefined
-    const move = (event) => continueDrag(event.clientY)
+    const move = (event) => {
+      if (event.pointerType === 'touch') return
+      continueDrag(event.clientY)
+    }
     const up = () => endDrag()
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -361,10 +387,67 @@ export default function ScoreView({
     }
   }, [continueDrag, endDrag])
 
-  // Touch: the same gesture, with a larger threshold for a finger.
+  // ── touch ──────────────────────────────────────────────────────────
+
+  /**
+   * On a touch screen a pitch drag has to be asked for.
+   *
+   * The score scrolls, and a finger that lands on a note on its way past
+   * would otherwise transpose it. So a touch on a note arms a short timer:
+   * move before it fires and the gesture is a scroll and is left alone; wait
+   * for it and the note takes hold -- it highlights, and from then on the
+   * gesture is a drag. Same pattern as dragging to reorder a list.
+   */
+  const armTouchDrag = useCallback(
+    (touch, id) => {
+      touchRef.current = {
+        id,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        armed: false,
+        timer: window.setTimeout(() => {
+          const pending = touchRef.current
+          if (!pending || pending.id !== id) return
+          pending.armed = true
+          beginDrag(pending.startY, id)
+          setDragging(true)
+          const element = containerRef.current?.querySelector(`g[data-id="${id}"]`)
+          element?.classList.add('is-dragging-note')
+          // A short buzz where the platform offers one, so it is clear the
+          // note has been picked up rather than the page failing to scroll.
+          window.navigator?.vibrate?.(12)
+        }, LONG_PRESS_MS),
+      }
+    },
+    [beginDrag],
+  )
+
+  const cancelTouchDrag = useCallback(() => {
+    const pending = touchRef.current
+    if (pending?.timer) window.clearTimeout(pending.timer)
+    if (pending?.id) {
+      containerRef.current
+        ?.querySelector(`g[data-id="${pending.id}"]`)
+        ?.classList.remove('is-dragging-note')
+    }
+    touchRef.current = null
+    setDragging(false)
+    endDrag()
+  }, [endDrag])
+
   const handleTouchStart = useCallback(
     (event) => {
-      if (insertMode) return
+      // Two fingers: a pinch, which is zoom, not editing.
+      if (event.touches.length === 2) {
+        cancelTouchDrag()
+        pinchRef.current = {
+          distance: touchDistance(event.touches),
+          startZoom: engine?.zoom || 1,
+        }
+        return
+      }
+      if (insertMode || event.touches.length !== 1) return
+
       const touch = event.touches[0]
       const element = document.elementFromPoint(touch.clientX, touch.clientY)
       const scope =
@@ -373,19 +456,55 @@ export default function ScoreView({
       const id =
         eventTargetFrom(element) || nearestEventTo(touch.clientX, touch.clientY, scope)
       if (!id) return
-      beginDrag(touch.clientY, id)
-      onSelect?.(id, { extend: false })
+      armTouchDrag(touch, id)
     },
-    [beginDrag, eventTargetFrom, insertMode, nearestEventTo, onSelect],
+    [armTouchDrag, cancelTouchDrag, engine, eventTargetFrom, insertMode, nearestEventTo],
   )
 
   const handleTouchMove = useCallback(
     (event) => {
-      if (!dragRef.current) return
+      const pinch = pinchRef.current
+      if (pinch && event.touches.length === 2) {
+        event.preventDefault()
+        const distance = touchDistance(event.touches)
+        if (pinch.distance > 0) {
+          onZoom?.(pinch.startZoom * (distance / pinch.distance))
+        }
+        return
+      }
+
+      const pending = touchRef.current
+      if (!pending) return
+
+      if (!pending.armed) {
+        // Moved before the press took hold: this is a scroll, so let it go.
+        const touch = event.touches[0]
+        const moved = Math.hypot(
+          touch.clientX - pending.startX,
+          touch.clientY - pending.startY,
+        )
+        if (moved > TOUCH_SLOP_PX) cancelTouchDrag()
+        return
+      }
+
       event.preventDefault()
       continueDrag(event.touches[0].clientY)
     },
-    [continueDrag],
+    [cancelTouchDrag, continueDrag, onZoom],
+  )
+
+  const handleTouchEnd = useCallback(
+    (event) => {
+      if (pinchRef.current && event.touches.length < 2) pinchRef.current = null
+      const pending = touchRef.current
+      // A tap that never became a drag selects, which is what a tap means.
+      if (pending && !pending.armed) {
+        onSelect?.(pending.id, { extend: false })
+        gestureRef.current = { id: pending.id }
+      }
+      cancelTouchDrag()
+    },
+    [cancelTouchDrag, onSelect],
   )
 
   if (!engine) {
@@ -402,14 +521,15 @@ export default function ScoreView({
   return (
     <div
       ref={containerRef}
-      className={`score-view relative overflow-auto rounded-xl border ${
+      className={`score-view relative overflow-auto border ${
         insertMode ? 'cursor-crosshair border-emerald-300' : 'border-slate-200'
-      } ${className}`}
+      } ${dragging ? 'is-dragging' : ''} ${className}`}
       onClick={handleClick}
       onPointerDown={handlePointerDown}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
-      onTouchEnd={endDrag}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
       role="application"
       aria-label="Partitura"
     >

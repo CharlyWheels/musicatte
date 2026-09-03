@@ -8,9 +8,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Library, Loader2, Search, Star, User } from 'lucide-react'
+import { Library, Loader2, Search, SlidersHorizontal, Star, User } from 'lucide-react'
 
 import { useAuth } from '../context/AuthContext.jsx'
+import { useDevice } from '../hooks/useDevice.js'
 import { repositoryService } from '../services/repositoryService.js'
 import { GENRES, INSTRUMENTS } from '../editor/constants.js'
 
@@ -22,6 +23,7 @@ const SORTS = [
 
 export default function Repository() {
   const { token } = useAuth()
+  const { isCompact } = useDevice()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -45,6 +47,58 @@ export default function Repository() {
   useEffect(() => {
     load(filters)
   }, [filters, load])
+
+  // Only the ones that actually narrow the list; the sort order always has a
+  // value and counting it would show "1" on a page with no filters set.
+  const activeFilters = [filters.instrument, filters.genre].filter(Boolean).length
+
+  const selectClass =
+    'min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base sm:text-sm'
+
+  const selects = (
+    <>
+      <select
+        value={filters.instrument}
+        onChange={(event) =>
+          setFilters((current) => ({ ...current, instrument: event.target.value }))
+        }
+        className={selectClass}
+        aria-label="Instrumento"
+      >
+        <option value="">Cualquier instrumento</option>
+        {INSTRUMENTS.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+      <select
+        value={filters.genre}
+        onChange={(event) => setFilters((current) => ({ ...current, genre: event.target.value }))}
+        className={selectClass}
+        aria-label="Género"
+      >
+        <option value="">Cualquier género</option>
+        {GENRES.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+      <select
+        value={filters.sort}
+        onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value }))}
+        className={selectClass}
+        aria-label="Ordenar por"
+      >
+        {SORTS.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
+    </>
+  )
 
   return (
     <div className="space-y-5">
@@ -73,49 +127,30 @@ export default function Repository() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Buscar por título o compositor…"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-base transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 sm:text-sm"
           />
         </div>
-        <select
-          value={filters.instrument}
-          onChange={(event) =>
-            setFilters((current) => ({ ...current, instrument: event.target.value }))
-          }
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
-          aria-label="Instrumento"
-        >
-          <option value="">Cualquier instrumento</option>
-          {INSTRUMENTS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.genre}
-          onChange={(event) => setFilters((current) => ({ ...current, genre: event.target.value }))}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
-          aria-label="Género"
-        >
-          <option value="">Cualquier género</option>
-          {GENRES.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <select
-          value={filters.sort}
-          onChange={(event) => setFilters((current) => ({ ...current, sort: event.target.value }))}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm"
-          aria-label="Ordenar por"
-        >
-          {SORTS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </select>
+
+        {/* Three full-width selects stacked on a phone pushed the first result
+            most of a screen down, to narrow a list that is usually short
+            enough not to need narrowing. Folded away, with the number of
+            active ones on the summary so nothing is hidden silently. */}
+        {isCompact ? (
+          <details className="rounded-xl border border-slate-200 bg-white">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-sm font-medium text-slate-600">
+              <SlidersHorizontal size={16} className="text-slate-400" />
+              Filtros y orden
+              {activeFilters > 0 && (
+                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                  {activeFilters}
+                </span>
+              )}
+            </summary>
+            <div className="grid gap-2 border-t border-slate-100 p-3">{selects}</div>
+          </details>
+        ) : (
+          selects
+        )}
       </form>
 
       {loading ? (
@@ -123,7 +158,7 @@ export default function Repository() {
           <Loader2 size={22} className="animate-spin text-indigo-500" />
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 py-14 text-center">
+        <div className="rounded-2xl border border-dashed border-slate-300 px-6 py-14 text-center">
           <Library size={38} className="mx-auto mb-3 text-slate-300" />
           <p className="font-medium text-slate-500">No hay partituras que coincidan</p>
           <p className="text-sm text-slate-400">

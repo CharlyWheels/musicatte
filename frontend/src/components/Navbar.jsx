@@ -24,24 +24,24 @@ export default function Navbar() {
   return (
     <>
       <header className="sticky top-0 z-30 hidden border-b border-slate-200 bg-white/85 backdrop-blur-lg md:block no-print">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-[100rem] items-center justify-between gap-2 px-4 py-3">
           <Link
             to="/"
-            className="flex items-center gap-2.5 font-bold text-slate-900 transition hover:text-indigo-600"
+            className="flex shrink-0 items-center gap-2.5 font-bold text-slate-900 transition hover:text-indigo-600"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600">
               <Music size={16} className="text-white" />
             </span>
-            <span className="text-lg">Musicatte</span>
+            <span className="hidden text-lg lg:inline">Musicatte</span>
           </Link>
 
-          <nav className="flex items-center gap-1" aria-label="Secciones">
+          <nav className="flex min-w-0 items-center gap-0.5 lg:gap-1" aria-label="Secciones">
             {items.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  `flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-sm font-medium transition lg:px-3 ${
                     isActive
                       ? 'bg-indigo-50 text-indigo-700'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
@@ -58,7 +58,7 @@ export default function Navbar() {
             {isAuthenticated ? (
               <>
                 <span
-                  className="max-w-[12rem] truncate rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600"
+                  className="hidden max-w-[12rem] truncate rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600 xl:block"
                   title={user?.email}
                 >
                   {user?.email}
@@ -66,7 +66,8 @@ export default function Navbar() {
                 <button
                   type="button"
                   onClick={logout}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+                  title={user?.email ? `Salir de ${user.email}` : 'Salir'}
                 >
                   <LogOut size={14} /> Salir
                 </button>

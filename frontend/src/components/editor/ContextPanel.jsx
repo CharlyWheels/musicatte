@@ -56,7 +56,7 @@ function Chip({ active, onClick, children, title, disabled, tone = 'indigo' }) {
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={`rounded-lg border px-2.5 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+      className={`min-h-[2.25rem] rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
         active
           ? `${activeTone} border-transparent shadow-sm`
           : 'border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700'
@@ -74,7 +74,7 @@ function Select({ label, value, onChange, options }) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-sm transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-base transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 sm:text-sm"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -97,6 +97,7 @@ export default function ContextPanel({
   tempo,
   lyric,
   actions,
+  compact = false,
 }) {
   const single = selection.length === 1
   const many = selection.length > 1
@@ -123,7 +124,13 @@ export default function ContextPanel({
   const staffProperties = staves.find((staff) => staff.staff === String(activeStaff)) || staves[0]
 
   return (
-    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <aside
+      className={
+        compact
+          ? 'flex min-h-0 flex-col bg-white'
+          : 'flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm'
+      }
+    >
       <div className="flex shrink-0 border-b border-slate-200 bg-slate-50">
         {[
           { id: 'note', label: 'Nota', icon: Music2, disabled: !selection.length },
@@ -447,7 +454,9 @@ export default function ContextPanel({
 
             <Section
               title={`Compás ${currentMeasure || 1} de ${measureCount}`}
-              hint="Haz doble clic en un compás de la partitura para seleccionarlo aquí."
+              hint={compact
+                ? 'Toca dos veces un compás de la partitura para elegirlo aquí.'
+                : 'Haz doble clic en un compás de la partitura para seleccionarlo aquí.'}
             >
               <div className="mb-3 grid gap-3">
                 <Select

@@ -14,6 +14,7 @@ import {
   Download,
   Globe,
   Loader2,
+  MoreHorizontal,
   MousePointerClick,
   Pause,
   Play,
@@ -75,6 +76,17 @@ export default function EditorToolbar({
   const [exportOpen, setExportOpen] = useState(false)
   const exportRef = useRef(null)
 
+  const statusLabel = saving
+    ? 'Guardando…'
+    : dirty
+      ? 'Sin guardar'
+      : savedAt
+        ? `Guardado ${new Date(savedAt).toLocaleTimeString('es-ES', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}`
+        : ''
+
   useEffect(() => {
     if (!exportOpen) return undefined
     const close = (event) => {
@@ -85,15 +97,23 @@ export default function EditorToolbar({
   }, [exportOpen])
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+    <div className="rounded-xl border border-slate-200 bg-white px-2 py-2 shadow-sm sm:px-3">
+      {/* Two deliberate rows on a phone: the title is the widest thing here
+          and squeezing it into the control row truncated it to nine
+          characters. From sm upwards it is all one row. */}
+      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
       <input
-        className="min-w-[9rem] flex-1 rounded-lg border border-transparent bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 transition focus:border-indigo-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+        // flex-1 only once the row is a row: in the phone's column layout it
+        // made the field grow along the cross axis and the title box came out
+        // 128px tall.
+        className="min-w-0 rounded-lg border border-transparent bg-slate-50 px-3 py-2 text-base font-semibold text-slate-800 transition focus:border-indigo-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100 sm:flex-1 sm:basis-32 sm:text-sm"
         value={title}
         onChange={(event) => onTitleChange(event.target.value)}
         placeholder="Título de la partitura"
         aria-label="Título de la partitura"
       />
 
+      <div className="flex items-center gap-1.5">
       <div className="flex items-center">
         <IconButton onClick={onUndo} disabled={!canUndo} title="Deshacer (Ctrl+Z)">
           <Undo2 size={17} />
@@ -138,23 +158,19 @@ export default function EditorToolbar({
       >
         <Plus size={16} />
         <span className="hidden lg:inline">Compás</span>
-        <span className="text-xs tabular-nums text-slate-400">{measureCount}</span>
+        <span className="text-xs tabular-nums text-slate-400" aria-hidden="true">
+          {measureCount}
+        </span>
+        <span className="sr-only">
+          Añadir un compás. La partitura tiene {measureCount}.
+        </span>
       </button>
 
       <Divider />
 
       <div className="ml-auto flex items-center gap-1.5">
-        <span className="hidden text-xs text-slate-400 sm:block" aria-live="polite">
-          {saving
-            ? 'Guardando…'
-            : dirty
-              ? 'Sin guardar'
-              : savedAt
-                ? `Guardado ${new Date(savedAt).toLocaleTimeString('es-ES', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}`
-                : ''}
+        <span className="hidden text-xs text-slate-400 lg:block" aria-live="polite">
+          {statusLabel}
         </span>
 
         <button
@@ -167,6 +183,8 @@ export default function EditorToolbar({
           <span className="hidden sm:inline">Guardar</span>
         </button>
 
+        {/* Publishing and downloading are occasional, so on a narrow screen
+            they go behind one menu rather than competing for the row. */}
         <button
           type="button"
           onClick={onPublish}
@@ -175,7 +193,7 @@ export default function EditorToolbar({
               ? 'Quitar del repositorio comunitario'
               : 'Publicar en el repositorio comunitario'
           }
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+          className={`hidden items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition sm:flex ${
             published
               ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
               : 'border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -192,21 +210,42 @@ export default function EditorToolbar({
             className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
             aria-haspopup="menu"
             aria-expanded={exportOpen}
+            aria-label="Más acciones"
           >
             {exporting ? (
               <Loader2 size={16} className="animate-spin" />
             ) : (
-              <Download size={16} />
+              <>
+                <Download size={16} className="hidden sm:block" />
+                <MoreHorizontal size={18} className="sm:hidden" />
+              </>
             )}
             <span className="hidden lg:inline">Descargar</span>
-            <ChevronDown size={14} />
+            <ChevronDown size={14} className="hidden sm:block" />
           </button>
 
           {exportOpen && (
             <div
               role="menu"
-              className="absolute right-0 z-40 mt-1 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+              className="absolute right-0 z-40 mt-1 w-[min(19rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
             >
+              {/* On a phone this menu is also where publishing lives. */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setExportOpen(false)
+                  onPublish()
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition hover:bg-slate-50 sm:hidden"
+              >
+                <Globe size={16} className={published ? 'text-emerald-600' : 'text-slate-400'} />
+                <span className="text-sm font-medium text-slate-800">
+                  {published ? 'Quitar del repositorio' : 'Publicar en el repositorio'}
+                </span>
+              </button>
+              <div className="my-1 h-px bg-slate-100 sm:hidden" />
+
               {EXPORT_FORMATS.map((format) => (
                 <button
                   key={format.value}
@@ -237,9 +276,16 @@ export default function EditorToolbar({
                   Usa el diálogo de impresión del navegador
                 </span>
               </button>
+              {statusLabel && (
+                <p className="border-t border-slate-100 px-3 pb-1 pt-2 text-xs text-slate-400 lg:hidden">
+                  {statusLabel}
+                </p>
+              )}
             </div>
           )}
         </div>
+      </div>
+      </div>
       </div>
     </div>
   )

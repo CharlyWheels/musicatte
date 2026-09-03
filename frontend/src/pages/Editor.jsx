@@ -7,11 +7,14 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ChevronRight, Keyboard, X } from 'lucide-react'
 
 import { useAuth } from '../context/AuthContext.jsx'
+import { useDevice } from '../hooks/useDevice.js'
+import { useFillHeight } from '../hooks/useFillHeight.js'
 import ScoreView from '../components/editor/ScoreView.jsx'
 import { revealMeasure } from '../components/editor/scoreDom.js'
 import EditorToolbar from '../components/editor/EditorToolbar.jsx'
 import ContextPanel from '../components/editor/ContextPanel.jsx'
 import ZoomControls from '../components/editor/ZoomControls.jsx'
+import ToolSheet from '../components/editor/ToolSheet.jsx'
 import ShortcutsDialog from '../components/editor/ShortcutsDialog.jsx'
 import { useScoreEditor, readDraft, clearDraft } from '../editor/useScoreEditor.js'
 import * as edits from '../editor/edits.js'
@@ -22,6 +25,9 @@ import { pitchAt } from '../editor/pitchGeometry.js'
 import { Playback } from '../editor/playback.js'
 import { scoreService } from '../services/scoreService.js'
 import { repositoryService } from '../services/repositoryService.js'
+
+// The mobile navigation bar, which the sheet and the score both sit above.
+const NAV_HEIGHT_PX = 60
 
 export default function Editor() {
   const location = useLocation()
@@ -147,6 +153,10 @@ export default function Editor() {
   const [currentMeasure, setCurrentMeasure] = useState(1)
   const [entryDuration, setEntryDuration] = useState('4')
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  // The collapsed sheet's height, measured, so the score gets exactly the
+  // space that is left rather than a guess at it.
+  const [sheetHeight, setSheetHeight] = useState(96)
   const [exporting, setExporting] = useState(false)
   const [soundingIds, setSoundingIds] = useState([])
   const [playing, setPlaying] = useState(false)
@@ -155,7 +165,9 @@ export default function Editor() {
   const [layoutTick, setLayoutTick] = useState(0)
   const bumpLayout = useCallback(() => setLayoutTick((value) => value + 1), [])
 
+  const { isCompact, isTouch } = useDevice()
   const scoreContainerRef = useRef(null)
+  const frameRef = useRef(null)
   const playbackRef = useRef(null)
   if (!playbackRef.current) playbackRef.current = new Playback()
 
@@ -698,6 +710,33 @@ export default function Editor() {
 
   // ── render ─────────────────────────────────────────────────────────
 
+  // On a phone the score gets whatever is left between the toolbar above it
+  // and the sheet plus navigation below. Measured, because the pieces above it
+  // change height (a second toolbar row, a warning strip) and adding up
+  // constants was wrong by tens of pixels in both directions.
+  useFillHeight(frameRef, {
+    enabled: isCompact,
+    // The sheet, the navigation bar, and a little air between them.
+    reserveBottom: sheetHeight + NAV_HEIGHT_PX + 12,
+    min: 240,
+  })
+
+  const panel = (
+    <ContextPanel
+      selection={selection}
+      noteInfo={noteInfo}
+      staves={snapshot.staves}
+      activeStaff={activeStaff}
+      onSelectStaff={setActiveStaff}
+      measureCount={snapshot.measureCount}
+      currentMeasure={currentMeasure}
+      tempo={tempo}
+      lyric={lyric}
+      actions={actions}
+      compact={isCompact}
+    />
+  )
+
   if (loadingScore) {
     return <p className="py-12 text-center text-sm text-slate-400">Abriendo la partitura…</p>
   }
@@ -720,7 +759,12 @@ export default function Editor() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-9rem)] min-h-[32rem] flex-col gap-3 md:h-[calc(100vh-7rem)]">
+    <div
+      ref={frameRef}
+      className={`flex flex-col gap-2 md:gap-3 ${
+        isCompact ? 'min-h-[16rem]' : 'h-[calc(100dvh-8rem)] min-h-[30rem]'
+      }`}
+    >
       {message && (
         <div
           role="status"
@@ -799,8 +843,11 @@ export default function Editor() {
 
       {insertMode && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
-          <ChevronRight size={15} />
-          Haz clic en el pentagrama <strong>a la altura de la nota</strong> que quieras añadir.
+          <ChevronRight size={15} className="shrink-0" />
+          <span>
+            {isTouch ? 'Toca' : 'Haz clic en'} el pentagrama{' '}
+            <strong>a la altura de la nota</strong> que quieras añadir.
+          </span>
           <button
             type="button"
             onClick={() => setInsertMode(false)}
@@ -813,9 +860,9 @@ export default function Editor() {
       )}
 
       {snapshot.problems.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          <AlertTriangle size={15} className="text-amber-600" />
-          <span>
+        <div className="flex shrink-0 items-center gap-2 overflow-x-auto rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 md:flex-wrap md:overflow-visible md:px-4">
+          <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+          <span className="shrink-0">
             {snapshot.problems.length === 1
               ? 'Un compás no cuadra:'
               : `${snapshot.problems.length} compases no cuadran:`}
@@ -825,7 +872,7 @@ export default function Editor() {
               key={`${problem.measure}-${problem.staff}-${problem.layer}`}
               type="button"
               onClick={() => goToMeasure(problem.measure)}
-              className="rounded-md bg-white px-2 py-0.5 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-100"
+              className="shrink-0 rounded-md bg-white px-2 py-1 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-100"
               title={`Tiene ${problem.filled} de ${problem.expected} tiempos. Ir a este compás.`}
             >
               compás {problem.measure} ({problem.filled}/{problem.expected})
@@ -834,49 +881,60 @@ export default function Editor() {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      {/* The side panel appears from tablet-portrait width upwards. It used to
+          need 1024px, so an iPad held upright -- the likeliest way to use this
+          at a music stand -- got the phone layout and left the score 150px
+          tall beside a mostly empty panel. */}
+      <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(0,1fr)_17rem] xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="relative min-h-0" ref={scoreContainerRef}>
-        <ScoreView
-          engine={engineRef.current}
-          revision={revision + layoutTick * 1000000}
-          selection={selection}
-          onSelect={handleSelect}
-          onDragPitch={handleDragPitch}
-          onAddNoteAt={handleAddNoteAt}
-          onOpenMeasure={handleOpenMeasure}
-          soundingIds={soundingIds}
-          insertMode={insertMode}
-          flaggedMeasureIds={flaggedMeasureIds}
-          onLayoutChange={bumpLayout}
-          className="h-full min-h-0"
-        />
-          <ZoomControls zoom={zoom} onZoom={setZoom} />
+          <ScoreView
+            engine={engineRef.current}
+            revision={revision + layoutTick * 1000000}
+            selection={selection}
+            onSelect={handleSelect}
+            onDragPitch={handleDragPitch}
+            onAddNoteAt={handleAddNoteAt}
+            onOpenMeasure={handleOpenMeasure}
+            soundingIds={soundingIds}
+            insertMode={insertMode}
+            flaggedMeasureIds={flaggedMeasureIds}
+            onLayoutChange={bumpLayout}
+            onZoom={setZoom}
+            className="h-full min-h-0 rounded-xl"
+          />
+          <ZoomControls zoom={zoom} onZoom={setZoom} showHint={isTouch} />
         </div>
 
-        <div className="min-h-0 lg:h-full">
-          <ContextPanel
-            selection={selection}
-            noteInfo={noteInfo}
-            staves={snapshot.staves}
-            activeStaff={activeStaff}
-            onSelectStaff={setActiveStaff}
-            measureCount={snapshot.measureCount}
-            currentMeasure={currentMeasure}
-            tempo={tempo}
-            lyric={lyric}
-            actions={actions}
-          />
+        <div className="hidden min-h-0 md:block md:h-full">
+          {panel}
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setShortcutsOpen(true)}
-        className="self-start text-xs font-medium text-slate-400 transition hover:text-slate-600"
-      >
-        <Keyboard size={13} className="mr-1 inline" />
-        Atajos de teclado
-      </button>
+      {/* On a phone the same panel is a sheet, so the score keeps the screen. */}
+      {isCompact && (
+        <ToolSheet
+          open={sheetOpen}
+          onToggle={setSheetOpen}
+          selection={selection}
+          noteInfo={noteInfo}
+          actions={actions}
+          onHeightChange={setSheetHeight}
+        >
+          {panel}
+        </ToolSheet>
+      )}
+
+      {/* A keyboard-shortcut list is noise on a device with no keyboard. */}
+      {!isTouch && (
+        <button
+          type="button"
+          onClick={() => setShortcutsOpen(true)}
+          className="self-start text-xs font-medium text-slate-400 transition hover:text-slate-600"
+        >
+          <Keyboard size={13} className="mr-1 inline" />
+          Atajos de teclado
+        </button>
+      )}
 
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
     </div>

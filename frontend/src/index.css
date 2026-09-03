@@ -183,10 +183,114 @@ body {
   }
 }
 
-/* ── Mobile ────────────────────────────────────────────────────────── */
+/* ── Touch and small screens ───────────────────────────────────────── */
 
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+/*
+ * Anything tappable gets a real target on a touch screen.
+ *
+ * Applied by pointer type rather than by width: a touch laptop is wide and
+ * still has fingers on it, and a desktop window dragged narrow does not
+ * suddenly need 44px buttons. 44px is the size both Apple and Google publish,
+ * and the editor had thirty-four controls under 40.
+ *
+ * The padding is what grows, not the icon, so the layout keeps its proportions
+ * and only the hit area opens up.
+ */
+@media (pointer: coarse) {
+  button,
+  a[href],
+  [role='button'],
+  select,
+  summary {
+    min-height: 44px;
+  }
+
+  /* Icon-only controls need width as well as height. */
+  button:not(:has(span)):not(:has(kbd)),
+  [role='button']:not(:has(span)) {
+    min-width: 44px;
+  }
+
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    min-height: 44px;
+    /* Below 16px, iOS Safari zooms the page when a field takes focus. */
+    font-size: max(1rem, 16px);
+  }
+
+  /* Inline links in a paragraph must not be stretched into blocks. */
+  p a[href],
+  li a[href],
+  label a[href] {
+    min-height: 0;
+  }
+}
+
+/*
+ * The score scrolls; a pitch drag has to be a deliberate gesture.
+ *
+ * pan-y lets a finger scroll the score vertically as normal, and the drag
+ * handler only claims the gesture after a short press -- otherwise touching a
+ * note to scroll past it would change its pitch.
+ */
+.score-view {
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.score-view.is-dragging {
+  touch-action: none;
+}
+
+/* The note being dragged, so a touch gesture shows it has taken hold. */
+.score-view g.is-dragging-note,
+.score-view g.is-dragging-note * {
+  fill: #4338ca;
+  stroke: #4338ca;
+}
+
+.score-view g.is-dragging-note {
+  filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.8));
+}
+
+@media (max-width: 767px) {
+  /* On a phone the page itself is the frame: the score should not also be a
+     rounded card inside it, which wastes width the music needs. */
+  .score-view {
+    padding: 8px 4px;
+  }
+
+  .score-page {
+    padding: 10px 8px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  }
+}
+
+/* A sheet of tools that slides up from the bottom on small screens. */
+.tool-sheet {
+  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-sheet {
+    transition: none;
+  }
+}
+
+.sheet-grip {
+  width: 2.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: #cbd5e1;
 }
 
 /* The camera frame overlay on the capture screen. */
