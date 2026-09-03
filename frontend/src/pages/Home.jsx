@@ -1,35 +1,28 @@
 import { Link } from 'react-router-dom'
-import { Camera, Music, Library, ArrowRight } from 'lucide-react'
+import { ArrowRight, Camera, Library, Music, Pencil } from 'lucide-react'
 
-const features = [
+const STEPS = [
   {
-    to: '/scanner',
     icon: Camera,
-    color: 'bg-amber-100 text-amber-600',
-    title: 'Scanner OCR',
-    desc: 'Sube una foto de una partitura y conviértela automáticamente a formato digital MusicXML.',
+    title: 'Haz la foto',
+    text: 'Encaja la hoja, con luz uniforme. Te decimos al momento si la foto sirve, sin esperar a que acabe el reconocimiento.',
   },
   {
-    to: '/editor',
     icon: Music,
-    color: 'bg-indigo-100 text-indigo-600',
-    title: 'Editor interactivo',
-    desc: 'Edita tus partituras con drag & drop. Mueve notas, cambia duraciones y alteraciones fácilmente.',
+    title: 'Revisa lo reconocido',
+    text: 'Te enseñamos la partitura digitalizada, te señalamos los compases que no cuadran y puedes escucharla para cazar notas mal leídas.',
   },
   {
-    to: '/repository',
-    icon: Library,
-    color: 'bg-emerald-100 text-emerald-600',
-    title: 'Repositorio comunitario',
-    desc: 'Publica tus partituras, descubre nuevas obras y valora las creaciones de la comunidad.',
+    icon: Pencil,
+    title: 'Corrige y comparte',
+    text: 'Edita notas, figuras, ligaduras y dinámicas. Descarga en MusicXML, MIDI o PDF, o publícala en el repositorio.',
   },
 ]
 
 export default function Home() {
   return (
-    <div className="space-y-12">
-      {/* Hero */}
-      <section className="space-y-6 pt-8 text-center md:pt-16">
+    <div className="space-y-14">
+      <section className="space-y-6 pt-8 text-center md:pt-14">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-100">
           <Music size={32} className="text-indigo-600" />
         </div>
@@ -37,50 +30,43 @@ export default function Home() {
           Musicatte
         </h1>
         <p className="mx-auto max-w-xl text-lg text-slate-500">
-          Digitaliza partituras desde una foto, edítalas con drag & drop y compártelas en un
-          repositorio comunitario abierto.
+          Digitaliza partituras desde una foto, corrígelas en un editor de verdad y compártelas
+          con quien quieras.
         </p>
         <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
           <Link
-            to="/scanner"
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white shadow-md transition hover:bg-indigo-700 hover:shadow-lg active:scale-95"
+            to="/escanear"
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white shadow-md transition hover:bg-indigo-700 hover:shadow-lg"
           >
-            Empezar ahora
-            <ArrowRight size={18} />
+            Escanear una partitura <ArrowRight size={18} />
           </Link>
           <Link
-            to="/repository"
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 active:scale-95"
+            to="/repositorio"
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50"
           >
-            Explorar repositorio
+            <Library size={18} /> Explorar el repositorio
           </Link>
         </div>
       </section>
 
-      {/* Features */}
-      <section className="grid gap-6 md:grid-cols-3">
-        {features.map((f) => (
-          <Link
-            key={f.to}
-            to={f.to}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-indigo-200 hover:shadow-md"
-          >
-            <div className={`mb-4 inline-flex rounded-xl p-3 ${f.color}`}>
-              <f.icon size={24} />
-            </div>
-            <h2 className="mb-2 text-lg font-bold text-slate-900 group-hover:text-indigo-600">
-              {f.title}
-            </h2>
-            <p className="text-sm leading-relaxed text-slate-500">{f.desc}</p>
-          </Link>
-        ))}
-      </section>
-
-      {/* Tech stack */}
-      <section className="text-center">
-        <p className="text-xs text-slate-400">
-          Powered by Verovio + HOMR OCR + FastAPI + React
-        </p>
+      <section>
+        <ol className="grid gap-6 md:grid-cols-3">
+          {STEPS.map((step, index) => (
+            <li
+              key={step.title}
+              className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+            >
+              <div className="mb-4 flex items-center gap-3">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-sm font-bold text-white">
+                  {index + 1}
+                </span>
+                <step.icon size={20} className="text-indigo-500" />
+              </div>
+              <h2 className="mb-2 text-lg font-bold text-slate-900">{step.title}</h2>
+              <p className="text-sm leading-relaxed text-slate-500">{step.text}</p>
+            </li>
+          ))}
+        </ol>
       </section>
     </div>
   )

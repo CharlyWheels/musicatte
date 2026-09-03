@@ -1,24 +1,35 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Loader2, Lock, Mail, UserPlus } from 'lucide-react'
+
 import { useAuth } from '../context/AuthContext'
-import { UserPlus, Mail, Lock } from 'lucide-react'
 
 export default function Register() {
-  const { register } = useAuth()
+  const { register, login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function onSubmit(e) {
-    e.preventDefault()
+  const destination = location.state?.from || '/mis-partituras'
+
+  async function onSubmit(event) {
+    event.preventDefault()
     setError('')
     setLoading(true)
     try {
       await register(form)
-      navigate('/login')
-    } catch {
-      setError('No se pudo crear la cuenta')
+      // Sign them straight in: asking somebody to type the password they just
+      // chose into a second form is a step that exists for no reason.
+      await login(form.email, form.password)
+      navigate(destination, { replace: true })
+    } catch (cause) {
+      setError(
+        cause?.response?.status === 400
+          ? 'Ya hay una cuenta con ese correo. Prueba a entrar.'
+          : cause?.response?.data?.detail || 'No se pudo crear la cuenta.',
+      )
     } finally {
       setLoading(false)
     }
@@ -32,48 +43,59 @@ export default function Register() {
             <UserPlus size={24} className="text-emerald-600" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Crear cuenta</h1>
-          <p className="text-sm text-slate-500">Únete a la comunidad Musicatte</p>
+          <p className="text-sm text-slate-500">Para guardar y compartir tus partituras</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
-          <div className="relative">
+          <label className="relative block">
+            <span className="sr-only">Correo electrónico</span>
             <Mail size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
               type="email"
-              placeholder="Email"
+              autoComplete="email"
+              placeholder="tu@correo.com"
               value={form.email}
-              onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
               required
             />
-          </div>
-          <div className="relative">
+          </label>
+
+          <label className="relative block">
+            <span className="sr-only">Contraseña</span>
             <Lock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
               type="password"
-              placeholder="Contraseña (mín. 6 caracteres)"
+              autoComplete="new-password"
+              placeholder="Contraseña (mínimo 6 caracteres)"
               value={form.password}
-              onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+              onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
               required
               minLength={6}
             />
-          </div>
+          </label>
+
           {error && (
-            <p className="rounded-lg bg-red-50 p-2.5 text-center text-sm text-red-600">{error}</p>
+            <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700" role="alert">
+              {error}
+            </p>
           )}
+
           <button
+            type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-indigo-600 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 font-medium text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
           >
-            {loading ? 'Creando...' : 'Crear cuenta'}
+            {loading && <Loader2 size={17} className="animate-spin" />}
+            Crear cuenta
           </button>
         </form>
 
         <p className="mt-6 text-center text-sm text-slate-500">
           ¿Ya tienes cuenta?{' '}
-          <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-700">
-            Inicia sesión
+          <Link to="/entrar" className="font-medium text-indigo-600 hover:text-indigo-800">
+            Entrar
           </Link>
         </p>
       </div>

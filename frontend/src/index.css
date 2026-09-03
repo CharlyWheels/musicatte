@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica,
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -15,37 +15,196 @@ body {
   margin: 0;
 }
 
-/* Verovio SVG styles */
-.verovio-canvas svg {
+/* Nothing should be reachable by keyboard without showing where focus is. */
+:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* ── The score ─────────────────────────────────────────────────────── */
+
+/* The working surface reads as paper on a desk, which is what makes the space
+   below a short score look like the rest of the page rather than a void. */
+.score-view {
+  background: #eef0f4;
+  padding: 16px 12px;
+}
+
+.score-page {
+  background: #fff;
+  border-radius: 4px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.08),
+    0 8px 24px -12px rgba(15, 23, 42, 0.18);
+  padding: 18px 20px;
+  margin: 0 auto;
+  max-width: 62rem;
+}
+
+.score-page + .score-page {
+  margin-top: 18px;
+}
+
+.score-view svg {
   width: 100%;
   height: auto;
   display: block;
 }
 
-.verovio-canvas .verovio-page {
-  border-bottom: 1px solid #e2e8f0;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-}
-
-.verovio-canvas .verovio-page:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-  margin-bottom: 0;
-}
-
-.verovio-canvas g[data-class="note"],
-.verovio-canvas g[data-class="rest"] {
+.score-view g[data-class="note"],
+.score-view g[data-class="rest"],
+.score-view g[data-class="mRest"] {
   cursor: grab;
-  transition: opacity 0.1s;
 }
 
-.verovio-canvas g[data-class="note"]:hover,
-.verovio-canvas g[data-class="rest"]:hover {
-  opacity: 0.65;
+.score-view g[data-class="note"]:hover,
+.score-view g[data-class="rest"]:hover,
+.score-view g[data-class="mRest"]:hover {
+  fill: #4f46e5;
+  stroke: #4f46e5;
 }
 
-/* Safe area for mobile bottom nav */
+/* Selected: indigo, with a halo so it reads at small staff sizes. */
+.score-view g.is-selected,
+.score-view g.is-selected * {
+  fill: #4338ca;
+  stroke: #4338ca;
+}
+
+.score-view g.is-selected {
+  filter: drop-shadow(0 0 3px rgba(99, 102, 241, 0.55));
+}
+
+/* Sounding during playback: a different hue from selection, so the two can be
+   told apart when a selected note is also playing. */
+.score-view g.is-sounding,
+.score-view g.is-sounding * {
+  fill: #059669;
+  stroke: #059669;
+}
+
+.score-view g.is-sounding {
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.6));
+}
+
+/* A measure whose contents do not add up: a band behind the bar, so the
+   warning is findable on the page without repainting the music. */
+.score-view .flag-band {
+  fill: #f59e0b;
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+/* Flashed when the user follows a warning to its measure. */
+.score-view g.is-revealed .flag-band,
+.score-view g.is-revealed {
+  animation: measure-flash 1.4s ease-out;
+}
+
+@keyframes measure-flash {
+  0%,
+  40% {
+    fill: #d97706;
+    opacity: 0.3;
+  }
+  100% {
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-view g.is-revealed .flag-band,
+  .score-view g.is-revealed {
+    animation: none;
+  }
+}
+
+/* ── Printing: the PDF route ───────────────────────────────────────── */
+
+@media print {
+  .score-view {
+    background: none !important;
+    padding: 0 !important;
+  }
+
+  .score-page {
+    box-shadow: none !important;
+    background: none !important;
+  }
+
+  /* Everything except the score itself is interface, not music. */
+  body > *:not(#root),
+  header,
+  nav,
+  aside,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  #root,
+  main {
+    display: block !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .score-view {
+    border: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  .score-page {
+    break-after: page;
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .score-page:last-child {
+    break-after: auto;
+  }
+
+  /* Selection and playback colours are screen affordances; ink is black. */
+  .score-view g.is-selected,
+  .score-view g.is-selected *,
+  .score-view g.is-sounding,
+  .score-view g.is-sounding * {
+    fill: #000 !important;
+    stroke: #000 !important;
+    filter: none !important;
+  }
+
+  .score-view .flag-band {
+    display: none !important;
+  }
+}
+
+/* ── Mobile ────────────────────────────────────────────────────────── */
+
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* The camera frame overlay on the capture screen. */
+.capture-frame {
+  background-image:
+    linear-gradient(to right, #10b981 3px, transparent 3px),
+    linear-gradient(to bottom, #10b981 3px, transparent 3px),
+    linear-gradient(to left, #10b981 3px, transparent 3px),
+    linear-gradient(to top, #10b981 3px, transparent 3px);
+  background-repeat: no-repeat;
+  background-size:
+    28px 3px,
+    3px 28px,
+    28px 3px,
+    3px 28px;
+  background-position:
+    top left,
+    top left,
+    bottom right,
+    bottom right;
 }

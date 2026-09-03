@@ -1,438 +1,896 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
-import ScoreCanvas from '../editor/ScoreCanvas'
-import Toolbar from '../editor/Toolbar'
-import NotePanel from '../editor/NotePanel'
-import AccidentalPanel from '../editor/AccidentalPanel'
-import ScoreSettingsPanel from '../editor/ScoreSettingsPanel'
-import {
-  changePitch,
-  changeDuration,
-  changeAccidental,
-  changeClef,
-  changeKeySig,
-  changeTimeSig,
-  toggleDot,
-  toggleTie,
-  toggleRest,
-  insertNoteAfter,
-  addNoteToChord,
-  deleteNote,
-  getNoteInfo,
-  getScoreProperties,
-  addMeasureMEI,
-  deleteLastMeasureMEI,
-  getMeasureCountMEI,
-} from '../editor/meiEditor'
-import { getTitleFromMusicXML, setTitleInMusicXML } from '../editor/musicxmlUtils'
-import { scoreService } from '../services/scoreService'
-import { repositoryService } from '../services/repositoryService'
-import { DEFAULT_MUSICXML } from '../editor/defaults'
-import { ChevronDown, ChevronUp, Music, Plus, Trash2, Minus, MousePointer2, Layers } from 'lucide-react'
+/**
+ * The editor: score first, one contextual panel, everything else out of the way.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { AlertTriangle, ChevronRight, Keyboard, X } from 'lucide-react'
+
+import { useAuth } from '../context/AuthContext.jsx'
+import ScoreView from '../components/editor/ScoreView.jsx'
+import { revealMeasure } from '../components/editor/scoreDom.js'
+import EditorToolbar from '../components/editor/EditorToolbar.jsx'
+import ContextPanel from '../components/editor/ContextPanel.jsx'
+import ZoomControls from '../components/editor/ZoomControls.jsx'
+import ShortcutsDialog from '../components/editor/ShortcutsDialog.jsx'
+import { useScoreEditor, readDraft, clearDraft } from '../editor/useScoreEditor.js'
+import * as edits from '../editor/edits.js'
+import { DURATION_LABELS, KEY_TO_PNAME } from '../editor/constants.js'
+import { DEFAULT_MEI } from '../editor/fixtures.js'
+import { localName, midiOf } from '../editor/mei.js'
+import { pitchAt } from '../editor/pitchGeometry.js'
+import { Playback } from '../editor/playback.js'
+import { scoreService } from '../services/scoreService.js'
+import { repositoryService } from '../services/repositoryService.js'
 
 export default function Editor() {
   const location = useLocation()
+  const params = useParams()
+  const navigate = useNavigate()
   const { token } = useAuth()
-  const importedMusicXML = location.state?.musicxml
-  const importedScoreId = location.state?.scoreId || null
 
-  const [musicxml, setMusicxml] = useState(importedMusicXML || DEFAULT_MUSICXML)
-  const [renderKey, setRenderKey] = useState(0)
-  const undoStack = useRef([])
-  const redoStack = useRef([])
-  const [selectedId, setSelectedId] = useState(null)
-  const [noteInfo, setNoteInfo] = useState(null)
-  const [scoreProps, setScoreProps] = useState(null)
-  const [measureCount, setMeasureCount] = useState(0)
-  const [scoreId, setScoreId] = useState(importedScoreId)
-  const [toast, setToast] = useState(null)
-  const [panelsOpen, setPanelsOpen] = useState(true)
+  const routeScoreId = params.id ? Number(params.id) : null
+  const [scoreId, setScoreId] = useState(routeScoreId || location.state?.scoreId || null)
+  // The state update from the first save has not landed by the time publishing
+  // or exporting needs the id, so it is also tracked in a ref.
+  const scoreIdRef = useRef(scoreId)
+  const [published, setPublished] = useState(false)
+  const [loadingScore, setLoadingScore] = useState(Boolean(routeScoreId))
+  const [initialData, setInitialData] = useState(
+    routeScoreId ? null : location.state?.scoreData || location.state?.musicxml || DEFAULT_MEI,
+  )
+  const [metadata, setMetadata] = useState({ instrument: 'piano', genre: 'general' })
+  const [draftOffer, setDraftOffer] = useState(null)
+
+  // ── open a saved score ─────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!routeScoreId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const score = await scoreService.get(routeScoreId, token)
+        if (cancelled) return
+        setInitialData(score.score_data)
+        setPublished(score.status === 'published')
+        setMetadata({ instrument: score.instrument, genre: score.genre })
+        scoreIdRef.current = score.id
+        setScoreId(score.id)
+      } catch {
+        if (!cancelled) navigate('/mis-partituras', { replace: true })
+      } finally {
+        if (!cancelled) setLoadingScore(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [routeScoreId, token, navigate])
+
+  const autosave = useCallback(
+    async (mei) => {
+      const payload = {
+        title: editorRef.current?.snapshot.title || 'Sin título',
+        composer: editorRef.current?.snapshot.composer || null,
+        instrument: metadata.instrument,
+        genre: metadata.genre,
+        score_data: mei,
+        score_format: 'mei',
+      }
+      const existing = scoreIdRef.current
+      if (existing) {
+        await scoreService.update(existing, payload, token)
+      } else {
+        const created = await scoreService.create(payload, token)
+        scoreIdRef.current = created.id
+        setScoreId(created.id)
+        // Keep the address bar honest so a refresh reopens the saved score
+        // rather than a blank one.
+        navigate(`/editor/${created.id}`, { replace: true, state: null })
+      }
+    },
+    [metadata.genre, metadata.instrument, navigate, token],
+  )
+
+  const editor = useScoreEditor({
+    initialData: initialData || DEFAULT_MEI,
+    scoreId,
+    onAutosave: token ? autosave : null,
+  })
+  const editorRef = useRef(editor)
+  editorRef.current = editor
+
+  const {
+    ready,
+    loadError,
+    revision,
+    engineRef,
+    docRef,
+    clipboardRef,
+    selection,
+    setSelection,
+    apply,
+    restore,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    dirty,
+    saving,
+    savedAt,
+    saveNow,
+    setTitle,
+    snapshot,
+    message,
+    notify,
+  } = editor
+
+  // ── offer back work interrupted by a refresh ───────────────────────
+
+  useEffect(() => {
+    if (!ready || loadError) return
+    const draft = readDraft(scoreId)
+    if (!draft) return
+    // Only offer it if it differs from what we just opened.
+    if (docRef.current && draft.mei === docRef.current.toString()) {
+      clearDraft(scoreId)
+      return
+    }
+    setDraftOffer(draft)
+  }, [ready, loadError, scoreId, docRef])
+
+  // ── local UI state ─────────────────────────────────────────────────
+
   const [insertMode, setInsertMode] = useState(false)
-  const toolkitRef = useRef(null)
+  const [zoom, setZoom] = useState(1)
+  const [activeStaff, setActiveStaff] = useState('1')
+  const [currentMeasure, setCurrentMeasure] = useState(1)
+  const [entryDuration, setEntryDuration] = useState('4')
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [soundingIds, setSoundingIds] = useState([])
+  const [playing, setPlaying] = useState(false)
+  // Bumped when the engraving is re-laid out for a new width, so the pages are
+  // redrawn from the new layout.
+  const [layoutTick, setLayoutTick] = useState(0)
+  const bumpLayout = useCallback(() => setLayoutTick((value) => value + 1), [])
 
-  const showToast = useCallback((msg, type = 'success') => {
-    setToast({ msg, type })
-    setTimeout(() => setToast(null), 3000)
+  const scoreContainerRef = useRef(null)
+  const playbackRef = useRef(null)
+  if (!playbackRef.current) playbackRef.current = new Playback()
+
+  useEffect(() => {
+    const playback = playbackRef.current
+    playback.onHighlight = (id, on) => {
+      setSoundingIds((current) => {
+        if (id == null) return []
+        if (on) return [...current, id]
+        return current.filter((value) => value !== id)
+      })
+    }
+    playback.onEnded = () => setPlaying(false)
+    return () => playback.stop({ silent: true })
   }, [])
 
-  function handleToolkitReady(tk) {
-    toolkitRef.current = tk
-    tk.loadData(musicxml)
-    refreshState()
-    setRenderKey((k) => k + 1)
-  }
-
-  function refreshState() {
-    if (!toolkitRef.current) return
-    setScoreProps(getScoreProperties(toolkitRef.current))
-    setMeasureCount(getMeasureCountMEI(toolkitRef.current))
-  }
+  // Stop playback when the document changes under it.
+  useEffect(() => {
+    if (playing) {
+      playbackRef.current.stop()
+      setPlaying(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision])
 
   useEffect(() => {
-    if (selectedId && toolkitRef.current) {
-      setNoteInfo(getNoteInfo(toolkitRef.current, selectedId))
-    } else {
-      setNoteInfo(null)
+    if (engineRef.current) engineRef.current.setZoom(zoom)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, ready])
+
+  // ── information about the selection ────────────────────────────────
+
+  const noteInfo = useMemo(() => {
+    const doc = docRef.current
+    if (!doc || selection.length !== 1) return null
+    const element = doc.byId(selection[0])
+    if (!element) return null
+    const parent = element.parentNode
+    const holder =
+      parent && localName(parent) === 'chord' ? parent : element
+    return {
+      pname: element.getAttribute('pname'),
+      oct: element.getAttribute('oct'),
+      accid: element.getAttribute('accid') || '',
+      dur: holder.getAttribute('dur') || '4',
+      durLabel: DURATION_LABELS[holder.getAttribute('dur') || '4'] || '',
+      dots: holder.getAttribute('dots') || '',
+      artic: holder.getAttribute('artic') || '',
+      isRest: localName(element) === 'rest',
+      measure: doc.measureNumber(element),
     }
-  }, [selectedId, renderKey])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, revision, docRef])
 
-  useEffect(() => { refreshState() }, [renderKey])
+  const lyric = useMemo(() => {
+    const doc = docRef.current
+    if (!doc || selection.length !== 1) return ''
+    return edits.readLyric(doc, selection[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, revision, docRef])
 
-  function pushUndo() {
-    if (!toolkitRef.current) return
-    undoStack.current.push(toolkitRef.current.getMEI())
-    redoStack.current = []
-  }
+  const tempo = useMemo(() => {
+    const doc = docRef.current
+    return doc ? edits.readTempo(doc) : { text: '', bpm: null }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision, docRef])
 
-  function applyEdit(fn) {
-    if (!toolkitRef.current) return
-    pushUndo()
-    const result = fn()
-    if (result) {
-      setRenderKey((k) => k + 1)
-    } else {
-      undoStack.current.pop()
-    }
-  }
-
-  function doUndo() {
-    if (!toolkitRef.current || undoStack.current.length === 0) return
-    redoStack.current.push(toolkitRef.current.getMEI())
-    toolkitRef.current.loadData(undoStack.current.pop())
-    setSelectedId(null)
-    setRenderKey((k) => k + 1)
-  }
-
-  function doRedo() {
-    if (!toolkitRef.current || redoStack.current.length === 0) return
-    undoStack.current.push(toolkitRef.current.getMEI())
-    toolkitRef.current.loadData(redoStack.current.pop())
-    setSelectedId(null)
-    setRenderKey((k) => k + 1)
-  }
-
-  function handleDragPitch(noteId, steps) {
-    applyEdit(() => changePitch(toolkitRef.current, noteId, steps))
-  }
-
-  function handleChangeDuration(dur) {
-    if (!selectedId) return
-    applyEdit(() => changeDuration(toolkitRef.current, selectedId, dur))
-  }
-
-  function handleChangeAccidental(accid) {
-    if (!selectedId) return
-    applyEdit(() => changeAccidental(toolkitRef.current, selectedId, accid))
-  }
-
-  function handleToggleDot() {
-    if (!selectedId) return
-    applyEdit(() => toggleDot(toolkitRef.current, selectedId))
-  }
-
-  function handleToggleTie() {
-    if (!selectedId) return
-    applyEdit(() => toggleTie(toolkitRef.current, selectedId))
-  }
-
-  function handleToggleRest() {
-    if (!selectedId) return
-    applyEdit(() => toggleRest(toolkitRef.current, selectedId))
-  }
-
-  // Add note to chord (same beat, different pitch)
-  function handleAddToChord() {
-    if (!selectedId || !toolkitRef.current) return
-    pushUndo()
-    const result = addNoteToChord(toolkitRef.current, selectedId)
-    if (result) {
-      setSelectedId(result.newId)
-      setRenderKey((k) => k + 1)
-    } else {
-      undoStack.current.pop()
-    }
-  }
-
-  // Insert note sequentially after selected
-  function handleInsertAfter() {
-    if (!selectedId || !toolkitRef.current) return
-    pushUndo()
-    const result = insertNoteAfter(toolkitRef.current, selectedId)
-    if (result) {
-      setSelectedId(result.newId)
-      setRenderKey((k) => k + 1)
-    } else {
-      undoStack.current.pop()
-    }
-  }
-
-  // Insert mode: click on staff to add note at position
-  function handleInsertAtPosition(afterNoteId) {
-    if (!toolkitRef.current || !afterNoteId) return
-    pushUndo()
-    const result = insertNoteAfter(toolkitRef.current, afterNoteId)
-    if (result) {
-      setSelectedId(result.newId)
-      setInsertMode(false)
-      setRenderKey((k) => k + 1)
-    } else {
-      undoStack.current.pop()
-    }
-  }
-
-  function handleDeleteNote() {
-    if (!selectedId) return
-    applyEdit(() => {
-      const r = deleteNote(toolkitRef.current, selectedId)
-      if (r) setSelectedId(null)
-      return r
-    })
-  }
-
-  function handleChangeClef(shape, line) {
-    applyEdit(() => changeClef(toolkitRef.current, shape, line))
-  }
-  function handleChangeKeySig(sig) {
-    applyEdit(() => changeKeySig(toolkitRef.current, sig))
-  }
-  function handleChangeTimeSig(count, unit) {
-    applyEdit(() => changeTimeSig(toolkitRef.current, count, unit))
-  }
-  function handleTitleChange(title) {
-    setMusicxml((prev) => setTitleInMusicXML(prev, title))
-  }
-  function handleAddMeasure() {
-    applyEdit(() => addMeasureMEI(toolkitRef.current))
-  }
-  function handleDeleteMeasure() {
-    applyEdit(() => deleteLastMeasureMEI(toolkitRef.current))
-  }
+  const currentBarline = useMemo(() => {
+    const doc = docRef.current
+    return doc ? edits.readBarline(doc, currentMeasure) : ''
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMeasure, revision, docRef])
 
   useEffect(() => {
-    function onKeyDown(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return
-      if (e.key === 'Escape') { setInsertMode(false); return }
-      if (e.key === 'i') { setInsertMode((m) => !m); return }
-      if (e.key === 'ArrowUp' && selectedId) { e.preventDefault(); handleDragPitch(selectedId, 1) }
-      if (e.key === 'ArrowDown' && selectedId) { e.preventDefault(); handleDragPitch(selectedId, -1) }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) { e.preventDefault(); handleDeleteNote() }
-      if (e.key === '.' && selectedId) { e.preventDefault(); handleToggleDot() }
-      if (e.key === 'r' && selectedId) { e.preventDefault(); handleToggleRest() }
-      if (e.key === 't' && selectedId) { e.preventDefault(); handleToggleTie() }
-      if (e.key === 'n' && selectedId) { e.preventDefault(); handleInsertAfter() }
-      if (e.key === 'a' && selectedId) { e.preventDefault(); handleAddToChord() }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); doUndo() }
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); doRedo() }
+    if (selection.length === 1 && noteInfo?.measure) setCurrentMeasure(noteInfo.measure)
+  }, [selection, noteInfo])
+
+  // Ids rather than numbers: only the visible pages are in the DOM, so a
+  // measure cannot be located by counting rendered ones.
+  const flaggedMeasureIds = useMemo(() => {
+    const doc = docRef.current
+    if (!doc) return []
+    return snapshot.problems
+      .map((problem) => doc.measureByNumber(problem.measure))
+      .filter(Boolean)
+      .map((measure) => measure.getAttribute('xml:id'))
+      .filter(Boolean)
+  }, [snapshot.problems, docRef])
+
+  // ── selection handling ─────────────────────────────────────────────
+
+  const handleSelect = useCallback(
+    (id, { extend = false } = {}) => {
+      setSelection((current) => {
+        if (!extend) return [id]
+        if (current.includes(id)) return current.filter((value) => value !== id)
+        // Keep the selection in document order, which is what slurs, beams and
+        // tuplets need.
+        const doc = docRef.current
+        const next = [...current, id]
+        if (!doc) return next
+        const order = doc.events.map((event) => event.getAttribute('xml:id'))
+        return next.slice().sort((a, b) => order.indexOf(a) - order.indexOf(b))
+      })
+    },
+    [setSelection, docRef],
+  )
+
+  // ── actions ────────────────────────────────────────────────────────
+
+  const withSelection = useCallback(
+    (operation, { requireSelection = true } = {}) => {
+      if (requireSelection && !selection.length) {
+        notify('Selecciona una nota primero.', 'warning')
+        return
+      }
+      const result = apply(operation)
+      if (result?.id) setSelection([result.id])
+      if (result?.ids) setSelection(result.ids)
+    },
+    [apply, notify, selection.length, setSelection],
+  )
+
+  const actions = useMemo(
+    () => ({
+      currentBarline,
+      setDuration: (dur) => {
+        setEntryDuration(dur)
+        if (selection.length) withSelection((doc) => edits.changeDuration(doc, selection, dur))
+      },
+      toggleDot: () => withSelection((doc) => edits.toggleDots(doc, selection, 1)),
+      setAccidental: (accid) =>
+        withSelection((doc) => edits.changeAccidental(doc, selection, accid)),
+      toggleRest: () => withSelection((doc) => edits.toggleRest(doc, selection[0])),
+      addChordNote: () => withSelection((doc) => edits.addChordNote(doc, selection[0])),
+      insertAfter: () =>
+        withSelection((doc) => edits.insertAfter(doc, selection[0], { dur: entryDuration })),
+      deleteSelection: () => withSelection((doc) => edits.deleteEvents(doc, selection)),
+      shiftOctave: (delta) => withSelection((doc) => edits.shiftOctave(doc, selection, delta)),
+      transpose: (semitones) =>
+        withSelection((doc) => edits.transpose(doc, selection, semitones)),
+      toggleArticulation: (artic) =>
+        withSelection((doc) => edits.toggleArticulation(doc, selection, artic)),
+      setDynamic: (value) => withSelection((doc) => edits.addDynamic(doc, selection[0], value)),
+      addHairpin: (form) => withSelection((doc) => edits.addHairpin(doc, selection, form)),
+      toggleTie: () => withSelection((doc) => edits.toggleTie(doc, selection[0])),
+      addSlur: () => withSelection((doc) => edits.addSlur(doc, selection)),
+      beam: () => withSelection((doc) => edits.beamSelection(doc, selection)),
+      unbeam: () => withSelection((doc) => edits.unbeamSelection(doc, selection)),
+      makeTuplet: (num, numbase) =>
+        withSelection((doc) => edits.makeTuplet(doc, selection, num, numbase)),
+      removeTuplet: () => withSelection((doc) => edits.removeTuplet(doc, selection)),
+      setLyric: (text) => withSelection((doc) => edits.setLyric(doc, selection[0], text)),
+      copy: () => {
+        const doc = docRef.current
+        if (!doc || !selection.length) return
+        const copied = edits.copyEvents(doc, selection)
+        if (copied) {
+          clipboardRef.current = copied
+          notify(`${copied.length} elemento(s) copiados.`)
+        }
+      },
+      paste: () => {
+        if (!clipboardRef.current.length) {
+          notify('No hay nada copiado.', 'warning')
+          return
+        }
+        withSelection((doc) => edits.pasteEvents(doc, selection[0], clipboardRef.current))
+      },
+
+      setClef: (shape, line) =>
+        apply((doc) => edits.changeClef(doc, activeStaff, shape, line)),
+      setKeySignature: (sig) => apply((doc) => edits.changeKeySignature(doc, activeStaff, sig)),
+      setTimeSignature: (count, unit) =>
+        apply((doc) => edits.changeTimeSignature(doc, activeStaff, count, unit)),
+      setTempo: (text, bpm) => apply((doc) => edits.setTempo(doc, 1, text, bpm)),
+      addStaff: () => apply((doc) => edits.addStaff(doc, { clefShape: 'F', clefLine: '4' })),
+      removeStaff: (staff) => {
+        apply((doc) => edits.removeStaff(doc, staff))
+        setActiveStaff('1')
+      },
+      addLayer: (staff) => apply((doc) => edits.addLayer(doc, staff)),
+      setBarline: (form) => apply((doc) => edits.setBarline(doc, currentMeasure, form)),
+      insertMeasureAfter: (number) => apply((doc) => edits.insertMeasure(doc, number)),
+      clearMeasure: (number) => apply((doc) => edits.clearMeasure(doc, number)),
+      deleteMeasure: (number) => {
+        apply((doc) => edits.deleteMeasure(doc, number))
+        setSelection([])
+        setCurrentMeasure((current) => Math.max(1, current - 1))
+      },
+      addKeyChange: (number) => {
+        const sig = window.prompt(
+          'Nueva armadura a partir de este compás (por ejemplo 2s para dos sostenidos, 3f para tres bemoles):',
+          '2s',
+        )
+        if (sig) apply((doc) => edits.addMidScoreChange(doc, number, { keySig: sig }))
+      },
+      addMeterChange: (number) => {
+        const value = window.prompt('Nuevo compás (por ejemplo 3/4):', '3/4')
+        if (!value) return
+        const [count, unit] = value.split('/')
+        if (!count || !unit) {
+          notify('Escribe el compás como 3/4.', 'warning')
+          return
+        }
+        apply((doc) =>
+          edits.addMidScoreChange(doc, number, { meter: { count: count.trim(), unit: unit.trim() } }),
+        )
+      },
+      addVolta: (number) => {
+        const label = window.prompt('Número de la casilla de repetición:', '1')
+        if (label) apply((doc) => edits.addVolta(doc, number, number, label))
+      },
+    }),
+    [
+      activeStaff,
+      apply,
+      clipboardRef,
+      currentBarline,
+      currentMeasure,
+      docRef,
+      entryDuration,
+      notify,
+      selection,
+      setSelection,
+      withSelection,
+    ],
+  )
+
+  const handleOpenMeasure = useCallback(
+    (measureId) => {
+      const doc = docRef.current
+      const element = measureId ? doc?.byId(measureId) : null
+      const number = element ? doc.measureNumber(element) : null
+      if (number) setCurrentMeasure(number)
+    },
+    [docRef],
+  )
+
+  /** Follow a warning to the bar it is about. */
+  const goToMeasure = useCallback(
+    (number) => {
+      setCurrentMeasure(number)
+      const doc = docRef.current
+      const measure = doc?.measureByNumber(number)
+      const id = measure?.getAttribute('xml:id')
+      if (id) revealMeasure(scoreContainerRef.current, id)
+    },
+    [docRef],
+  )
+
+  const handleDragPitch = useCallback(
+    (id, steps) => {
+      apply((doc) => edits.changePitch(doc, id, steps))
+    },
+    [apply],
+  )
+
+  const handleAddNoteAt = useCallback(
+    ({ measureId, staff, halfStepsFromTopLine }) => {
+      const doc = docRef.current
+      if (!doc) return
+      const measureElement = measureId ? doc.byId(measureId) : null
+      const measure = measureElement ? doc.measureNumber(measureElement) : null
+      if (!measure) return
+      setCurrentMeasure(measure)
+
+      const properties = doc.staffProperties(staff) || {}
+      const { pname, octave } = pitchAt(halfStepsFromTopLine, properties)
+      const result = apply((candidate) =>
+        edits.appendToMeasure(candidate, measure, {
+          staff,
+          pname,
+          octave,
+          dur: entryDuration,
+        }),
+      )
+      if (result?.id) {
+        setSelection([result.id])
+        const element = docRef.current?.byId(result.id)
+        if (element) playbackRef.current.preview(midiOf(element))
+      }
+    },
+    [apply, docRef, entryDuration, setSelection],
+  )
+
+  // ── playback ───────────────────────────────────────────────────────
+
+  const togglePlay = useCallback(() => {
+    const playback = playbackRef.current
+    if (playing) {
+      playback.stop()
+      setPlaying(false)
+      return
     }
+    const engine = engineRef.current
+    const doc = docRef.current
+    if (!engine || !doc) return
+    if (!playback.available) {
+      notify('Tu navegador no permite reproducir audio.', 'warning')
+      return
+    }
+    const duration = playback.prepare(engine.timemap(), doc)
+    if (!duration) {
+      notify('No hay notas que reproducir.', 'warning')
+      return
+    }
+    playback.play(0)
+    setPlaying(true)
+  }, [docRef, engineRef, notify, playing])
+
+  // ── saving, publishing, exporting ──────────────────────────────────
+
+  const handlePublish = useCallback(async () => {
+    if (!scoreIdRef.current || dirty) {
+      // Publishing saves first. Refusing with "save before publishing" was the
+      // system asking the user to do its own bookkeeping.
+      const saved = await saveNow()
+      if (!saved) return
+    }
+    const id = scoreIdRef.current
+    if (!id) {
+      notify('Guarda la partitura antes de publicarla.', 'warning')
+      return
+    }
+    try {
+      if (published) {
+        await repositoryService.unpublish(id, token)
+        setPublished(false)
+        notify('Retirada del repositorio.')
+      } else {
+        await repositoryService.publish(id, token)
+        setPublished(true)
+        notify('Publicada en el repositorio comunitario.')
+      }
+    } catch (error) {
+      notify(error?.response?.data?.detail || 'No se pudo cambiar la publicación.', 'error')
+    }
+  }, [dirty, notify, published, saveNow, token])
+
+  const handleExport = useCallback(
+    async (format) => {
+      if (format === 'print') {
+        window.print()
+        return
+      }
+      if (format === 'mei') {
+        const doc = docRef.current
+        if (!doc) return
+        downloadBlob(
+          new Blob([doc.toString()], { type: 'application/xml' }),
+          `${snapshot.title || 'partitura'}.mei`,
+        )
+        return
+      }
+      if (!scoreIdRef.current || dirty) {
+        const saved = await saveNow()
+        if (!saved) return
+      }
+      const id = scoreIdRef.current
+      if (!id) {
+        notify('Guarda la partitura antes de descargarla.', 'warning')
+        return
+      }
+      setExporting(true)
+      try {
+        // Conversion happens on the server: Verovio can only write MEI, so
+        // "download MusicXML" has to go through a real converter rather than
+        // renaming a MEI file.
+        const { blob, filename } = await scoreService.exportScore(id, format, token)
+        downloadBlob(blob, filename)
+      } catch (error) {
+        notify(
+          error?.response?.data?.detail ||
+            'No se pudo convertir la partitura a ese formato.',
+          'error',
+        )
+      } finally {
+        setExporting(false)
+      }
+    },
+    [dirty, docRef, notify, saveNow, snapshot.title, token],
+  )
+
+  // ── keyboard ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      const target = event.target
+      // Never steal keys from a field the user is typing in.
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
+      const meta = event.metaKey || event.ctrlKey
+
+      if (meta && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (meta && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redo()
+        return
+      }
+      if (meta && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        saveNow()
+        return
+      }
+      if (meta && event.key.toLowerCase() === 'c') {
+        actions.copy()
+        return
+      }
+      if (meta && event.key.toLowerCase() === 'v') {
+        actions.paste()
+        return
+      }
+      if (meta) return
+
+      if (event.key === 'Escape') {
+        setInsertMode(false)
+        setSelection([])
+        return
+      }
+      if (event.key === ' ') {
+        event.preventDefault()
+        togglePlay()
+        return
+      }
+      if (event.key === '?') {
+        setShortcutsOpen(true)
+        return
+      }
+
+      // Note entry by letter: the way music is actually typed.
+      const letter = event.key.toLowerCase()
+      if (KEY_TO_PNAME[letter] && selection.length === 1 && !insertMode) {
+        event.preventDefault()
+        const doc = docRef.current
+        const element = doc?.byId(selection[0])
+        const octave = parseInt(element?.getAttribute('oct') || '4', 10)
+        const result = apply((candidate) =>
+          edits.setPitch(candidate, selection[0], KEY_TO_PNAME[letter], octave),
+        )
+        if (result?.id) setSelection([result.id])
+        const updated = docRef.current?.byId(result?.id || selection[0])
+        if (updated) playbackRef.current.preview(midiOf(updated))
+        return
+      }
+
+      if (['1', '2', '3', '4', '5', '6'].includes(event.key)) {
+        const map = { 1: '1', 2: '2', 3: '4', 4: '8', 5: '16', 6: '32' }
+        actions.setDuration(map[event.key])
+        return
+      }
+
+      if (!selection.length) {
+        if (event.key === 'i') setInsertMode((mode) => !mode)
+        return
+      }
+
+      switch (event.key) {
+        case 'ArrowUp':
+          event.preventDefault()
+          if (event.shiftKey) actions.shiftOctave(1)
+          else withSelection((doc) => edits.changePitch(doc, selection[0], 1))
+          break
+        case 'ArrowDown':
+          event.preventDefault()
+          if (event.shiftKey) actions.shiftOctave(-1)
+          else withSelection((doc) => edits.changePitch(doc, selection[0], -1))
+          break
+        case 'ArrowRight':
+        case 'ArrowLeft': {
+          event.preventDefault()
+          const doc = docRef.current
+          if (!doc) break
+          const order = doc.events
+            .filter((element) => localName(element) !== 'chord')
+            .map((element) => element.getAttribute('xml:id'))
+          const index = order.indexOf(selection[selection.length - 1])
+          const next = order[index + (event.key === 'ArrowRight' ? 1 : -1)]
+          if (next) handleSelect(next, { extend: event.shiftKey })
+          break
+        }
+        case 'Delete':
+        case 'Backspace':
+          event.preventDefault()
+          actions.deleteSelection()
+          break
+        case '.':
+          event.preventDefault()
+          actions.toggleDot()
+          break
+        case 'r':
+          actions.toggleRest()
+          break
+        case 't':
+          actions.toggleTie()
+          break
+        case 'n':
+          actions.insertAfter()
+          break
+        case 'a':
+          actions.addChordNote()
+          break
+        case 'i':
+          setInsertMode((mode) => !mode)
+          break
+        default:
+          break
+      }
+    }
+
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedId])
+  }, [
+    actions,
+    apply,
+    docRef,
+    handleSelect,
+    insertMode,
+    redo,
+    saveNow,
+    selection,
+    setSelection,
+    togglePlay,
+    undo,
+    withSelection,
+  ])
 
-  function getCurrentData() {
-    return toolkitRef.current ? toolkitRef.current.getMEI() : musicxml
+  // ── render ─────────────────────────────────────────────────────────
+
+  if (loadingScore) {
+    return <p className="py-12 text-center text-sm text-slate-400">Abriendo la partitura…</p>
   }
 
-  async function onSave() {
-    try {
-      const data = getCurrentData()
-      const title = getTitleFromMusicXML(musicxml)
-      const payload = { title, instrument: 'piano', genre: 'general', musicxml: data, status: 'draft' }
-      const saved = scoreId
-        ? await scoreService.update(scoreId, payload, token)
-        : await scoreService.create(payload, token)
-      setScoreId(saved.id)
-      showToast('Partitura guardada')
-    } catch {
-      showToast('Error al guardar', 'error')
-    }
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-lg rounded-xl border border-rose-200 bg-rose-50 p-6 text-center">
+        <AlertTriangle className="mx-auto mb-3 text-rose-500" size={28} />
+        <h1 className="mb-1 text-lg font-semibold text-rose-900">No se pudo abrir la partitura</h1>
+        <p className="text-sm text-rose-700">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => navigate('/mis-partituras')}
+          className="mt-4 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white"
+        >
+          Volver a mis partituras
+        </button>
+      </div>
+    )
   }
-
-  async function onPublish() {
-    if (!scoreId) { showToast('Guarda antes de publicar', 'error'); return }
-    try {
-      await repositoryService.publish(scoreId, token)
-      showToast('Publicada en el repositorio')
-    } catch {
-      showToast('Error al publicar', 'error')
-    }
-  }
-
-  function onExport() {
-    const data = getCurrentData()
-    const title = getTitleFromMusicXML(musicxml) || 'partitura'
-    const blob = new Blob([data], { type: 'application/xml' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${title}.xml`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  const title = getTitleFromMusicXML(musicxml)
 
   return (
-    <div className="flex flex-col gap-4">
-      {toast && (
-        <div className={`fixed right-4 top-20 z-50 rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>
-          {toast.msg}
+    <div className="flex h-[calc(100vh-9rem)] min-h-[32rem] flex-col gap-3 md:h-[calc(100vh-7rem)]">
+      {message && (
+        <div
+          role="status"
+          className={`fixed right-4 top-20 z-50 max-w-sm rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
+            message.tone === 'error'
+              ? 'bg-rose-600 text-white'
+              : message.tone === 'warning'
+                ? 'bg-amber-500 text-white'
+                : 'bg-slate-800 text-white'
+          }`}
+        >
+          {message.text}
         </div>
       )}
 
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
-          <Music size={20} />
-        </div>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-slate-900">Editor de partituras</h1>
-          <p className="text-sm text-slate-500">Selecciona notas y edítalas con las herramientas</p>
-        </div>
-        {/* Insert mode toggle */}
-        <button
-          onClick={() => setInsertMode((m) => !m)}
-          className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-medium transition active:scale-95 ${
-            insertMode
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
-          }`}
-          title="Modo insertar (I) — Haz clic en el pentagrama para añadir notas"
-        >
-          <MousePointer2 size={16} />
-          {insertMode ? 'Insertando...' : 'Insertar'}
-        </button>
-      </div>
-
-      <Toolbar
-        title={title}
-        onTitleChange={handleTitleChange}
-        onSave={onSave}
-        onPublish={onPublish}
-        onExport={onExport}
-        onAddMeasure={handleAddMeasure}
-        onDeleteMeasure={handleDeleteMeasure}
-        onUndo={doUndo}
-        onRedo={doRedo}
-        canUndo={undoStack.current.length > 0}
-        canRedo={redoStack.current.length > 0}
-        measureCount={measureCount}
-      />
-
-      {/* Insert mode hint */}
-      {insertMode && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">
-          <MousePointer2 size={16} />
-          <span className="font-medium">Modo insertar activo</span>
-          <span className="text-emerald-600">— Haz clic en cualquier compás para añadir una nota</span>
-          <button onClick={() => setInsertMode(false)} className="ml-auto text-xs font-medium text-emerald-500 hover:text-emerald-700">
-            Esc para salir
+      {draftOffer && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+          <AlertTriangle size={16} className="text-amber-600" />
+          <span className="text-amber-900">
+            Tienes cambios sin guardar de{' '}
+            {new Date(draftOffer.at).toLocaleString('es-ES', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+            .
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              restore(draftOffer.mei)
+              setDraftOffer(null)
+              notify('Cambios recuperados.')
+            }}
+            className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white"
+          >
+            Recuperarlos
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              clearDraft(scoreId)
+              setDraftOffer(null)
+            }}
+            className="rounded-lg px-2 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+          >
+            Descartar
           </button>
         </div>
       )}
 
-      {/* Selected note info + actions */}
-      {noteInfo && !insertMode && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-sm">
-          <span className="font-bold text-indigo-700">
-            {noteInfo.isRest ? 'Silencio' : `${noteInfo.pname}${noteInfo.oct}`}
-          </span>
-          <span className="text-indigo-500">{noteInfo.durLabel}</span>
-          {noteInfo.accid && (
-            <span className="text-indigo-500">
-              {noteInfo.accid === 's' ? '\u266f' : noteInfo.accid === 'f' ? '\u266d' : '\u266e'}
-            </span>
-          )}
-          {noteInfo.dots === '1' && <span className="text-indigo-500">con puntillo</span>}
+      <EditorToolbar
+        title={snapshot.title}
+        onTitleChange={setTitle}
+        onSave={saveNow}
+        saving={saving}
+        dirty={dirty}
+        savedAt={savedAt}
+        onPublish={handlePublish}
+        published={published}
+        onExport={handleExport}
+        exporting={exporting}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onAddMeasure={() => apply((doc) => edits.insertMeasure(doc))}
+        measureCount={snapshot.measureCount}
+        insertMode={insertMode}
+        onToggleInsertMode={() => setInsertMode((mode) => !mode)}
+        playing={playing}
+        onTogglePlay={togglePlay}
+        canPlay={ready && snapshot.measureCount > 0}
+      />
 
-          <div className="ml-auto flex flex-wrap gap-1">
-            <button onClick={handleToggleDot} title="Puntillo (.)" className="rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs font-bold text-indigo-600 hover:bg-indigo-100 active:scale-95">.</button>
-            <button onClick={handleToggleTie} title="Ligadura (T)" className="rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 active:scale-95">{'\u2040'}</button>
-            <button onClick={handleToggleRest} title="Silencio (R)" className="rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 active:scale-95">
-              <Minus size={12} />
-            </button>
-
-            <div className="mx-1 h-5 w-px bg-indigo-200" />
-
-            <button
-              onClick={handleAddToChord}
-              title="Añadir al acorde (A) — Añade una nota en el mismo tiempo"
-              className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 active:scale-95"
-            >
-              <Layers size={12} /> Acorde
-            </button>
-            <button
-              onClick={handleInsertAfter}
-              title="Insertar después (N) — Añade una nota después"
-              className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-100 active:scale-95"
-            >
-              <Plus size={12} /> Después
-            </button>
-            <button
-              onClick={handleDeleteNote}
-              title="Eliminar (Del)"
-              className="flex items-center gap-1 rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 active:scale-95"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
+      {insertMode && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
+          <ChevronRight size={15} />
+          Haz clic en el pentagrama <strong>a la altura de la nota</strong> que quieras añadir.
+          <button
+            type="button"
+            onClick={() => setInsertMode(false)}
+            className="ml-auto rounded p-1 hover:bg-emerald-100"
+            aria-label="Salir del modo añadir"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      <ScoreCanvas
-        onToolkitReady={handleToolkitReady}
-        renderKey={renderKey}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onDragPitch={handleDragPitch}
-        insertMode={insertMode}
-        onInsertAtPosition={handleInsertAtPosition}
-      />
+      {snapshot.problems.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+          <AlertTriangle size={15} className="text-amber-600" />
+          <span>
+            {snapshot.problems.length === 1
+              ? 'Un compás no cuadra:'
+              : `${snapshot.problems.length} compases no cuadran:`}
+          </span>
+          {snapshot.problems.slice(0, 6).map((problem) => (
+            <button
+              key={`${problem.measure}-${problem.staff}-${problem.layer}`}
+              type="button"
+              onClick={() => goToMeasure(problem.measure)}
+              className="rounded-md bg-white px-2 py-0.5 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-100"
+              title={`Tiene ${problem.filled} de ${problem.expected} tiempos. Ir a este compás.`}
+            >
+              compás {problem.measure} ({problem.filled}/{problem.expected})
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="relative min-h-0" ref={scoreContainerRef}>
+        <ScoreView
+          engine={engineRef.current}
+          revision={revision + layoutTick * 1000000}
+          selection={selection}
+          onSelect={handleSelect}
+          onDragPitch={handleDragPitch}
+          onAddNoteAt={handleAddNoteAt}
+          onOpenMeasure={handleOpenMeasure}
+          soundingIds={soundingIds}
+          insertMode={insertMode}
+          flaggedMeasureIds={flaggedMeasureIds}
+          onLayoutChange={bumpLayout}
+          className="h-full min-h-0"
+        />
+          <ZoomControls zoom={zoom} onZoom={setZoom} />
+        </div>
+
+        <div className="min-h-0 lg:h-full">
+          <ContextPanel
+            selection={selection}
+            noteInfo={noteInfo}
+            staves={snapshot.staves}
+            activeStaff={activeStaff}
+            onSelectStaff={setActiveStaff}
+            measureCount={snapshot.measureCount}
+            currentMeasure={currentMeasure}
+            tempo={tempo}
+            lyric={lyric}
+            actions={actions}
+          />
+        </div>
+      </div>
 
       <button
-        onClick={() => setPanelsOpen(!panelsOpen)}
-        className="flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-700 md:hidden"
+        type="button"
+        onClick={() => setShortcutsOpen(true)}
+        className="self-start text-xs font-medium text-slate-400 transition hover:text-slate-600"
       >
-        {panelsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        {panelsOpen ? 'Ocultar herramientas' : 'Mostrar herramientas'}
+        <Keyboard size={13} className="mr-1 inline" />
+        Atajos de teclado
       </button>
 
-      <div className={`grid gap-3 sm:grid-cols-2 ${panelsOpen ? '' : 'hidden md:grid'}`}>
-        <NotePanel activeDur={noteInfo?.dur} onChangeDuration={handleChangeDuration} />
-        <AccidentalPanel activeAccid={noteInfo?.accid} onChangeAccidental={handleChangeAccidental} />
-      </div>
-
-      <div className={panelsOpen ? '' : 'hidden md:block'}>
-        <ScoreSettingsPanel
-          clefShape={scoreProps?.clefShape}
-          clefLine={scoreProps?.clefLine}
-          keySig={scoreProps?.keySig}
-          meterCount={scoreProps?.meterCount}
-          meterUnit={scoreProps?.meterUnit}
-          onChangeClef={handleChangeClef}
-          onChangeKeySig={handleChangeKeySig}
-          onChangeTimeSig={handleChangeTimeSig}
-        />
-      </div>
-
-      <div className="hidden text-xs text-slate-400 md:block">
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{'\u2191\u2193'}</span> tono
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">A</span> acorde
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">N</span> nota después
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">I</span> modo insertar
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">R</span> silencio
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">.</span> puntillo
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">T</span> ligadura
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">Del</span> eliminar
-        {' \u00b7 '}
-        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">{'\u2318Z'}</span> deshacer
-      </div>
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
     </div>
   )
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  // Revoking immediately can cancel the download in some browsers.
+  window.setTimeout(() => URL.revokeObjectURL(url), 4000)
 }
