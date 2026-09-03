@@ -1,11 +1,22 @@
-fastapi
-uvicorn
-sqlalchemy
-pydantic[email]
-python-multipart
-PyJWT
-passlib
-httpx
-pytest
-psycopg[binary]
-PyMuPDF
+# Pinned on purpose: an unpinned requirements file means the image you tested
+# and the image you deploy are different builds.
+fastapi==0.121.2
+uvicorn[standard]==0.38.0
+sqlalchemy==2.0.44
+pydantic[email]==2.13.1
+python-multipart==0.0.20
+PyJWT==2.10.1
+passlib[bcrypt]==1.7.4
+httpx==0.28.1
+psycopg[binary]==3.2.13
+PyMuPDF==1.26.6
+
+# Image preprocessing: the difference between a phone photo and something an
+# OMR model can read.
+opencv-python-headless==4.12.0.88
+numpy==2.2.6
+pillow==11.3.0
+
+# Notation conversion. Verovio can only write MEI, so MusicXML, compressed
+# MusicXML and MIDI exports go through here.
+music21==9.7.1

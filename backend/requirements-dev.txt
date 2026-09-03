@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Test-only. Kept out of requirements.txt so pytest does not ship in the
+# production image.
+pytest==9.0.1

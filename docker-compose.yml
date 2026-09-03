@@ -21,14 +21,15 @@ services:
       context: .
       dockerfile: homr.Dockerfile
     container_name: musicatte-homr
-    ports:
-      - "8080:8000"
     healthcheck:
+      # /health loads the models rather than just answering "yes", so a
+      # container missing its weights reports unhealthy instead of failing on
+      # every request.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
-      timeout: 5s
+      timeout: 30s
       retries: 5
-      start_period: 30s
+      start_period: 120s
 
   backend:
     build:
@@ -45,8 +46,12 @@ services:
       DATABASE_URL: postgresql+psycopg://musicatte:musicatte@db:5432/musicatte
       JWT_SECRET: dev-secret-change-in-production-32chars
       ACCESS_TOKEN_MINUTES: 1440
-      MAX_UPLOAD_BYTES: 8388608
+      MAX_UPLOAD_BYTES: 16777216
       HOMR_URL: http://homr:8000
+      ALLOWED_ORIGINS: http://localhost:5173
+      # In development the API runs the OCR worker itself, so there is one
+      # less container to think about. Production runs it separately.
+      RUN_INLINE_WORKER: "1"
     ports:
       - "8000:8000"
     volumes:
