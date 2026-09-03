@@ -488,3 +488,72 @@ def test_a_missing_upload_fails_the_job_with_a_clear_message():
         assert "ya no está disponible" in refreshed.error
     finally:
         db.close()
+
+
+# ─────────────────────── binarisation keeps note heads solid ───────────────────────
+
+
+def _head_positions(staves=3, space=16, width=1500):
+    """Where make_page draws its note heads, so their ink can be measured."""
+    positions = []
+    y = 90
+    for _ in range(staves):
+        for index, x in enumerate(range(140, width - 140, 90)):
+            positions.append((x, y + (index % 5) * space))
+        y += space * 5 + 90
+    return positions
+
+
+def test_note_heads_stay_solid_after_binarisation():
+    """A filled note head must not come out hollow.
+
+    An adaptive threshold whose window is about the size of a note head
+    measures the middle of the head against a mean the head itself dominates,
+    so the interior is dropped and the head becomes a ring. Every quarter note
+    then reads as a half note, and nothing about the result looks wrong until
+    you look at the image.
+    """
+    space = 16
+    page = make_page(staves=3, space=space, width=1500)
+    binary = pp.binarize(pp.flatten_illumination(page))
+
+    radius = max(3, int(space * 0.35))
+    coverages = []
+    for x, y in _head_positions(staves=3, space=space, width=1500):
+        patch = binary[y - radius : y + radius + 1, x - radius : x + radius + 1]
+        if patch.size:
+            coverages.append(float((patch > 0).mean()))
+
+    assert coverages
+    assert min(coverages) > 0.75, f"hollow note heads: min coverage {min(coverages):.2f}"
+
+
+def test_staff_lines_stay_thin_after_binarisation():
+    """The same threshold must not thicken the staff into a block."""
+    page = make_page(staves=3, space=16, width=1500)
+    binary = pp.binarize(pp.flatten_illumination(page))
+    ink = float((binary > 0).mean())
+    assert 0.005 < ink < 0.25, f"implausible ink coverage {ink:.3f}"
+    assert pp.analyse_staves(binary)[0] == 3
+
+
+def test_binarisation_survives_a_photographed_page():
+    """End to end on a page with keystone, tilt and a lighting gradient."""
+    payload = photograph(make_page(staves=3, space=16, width=1500), angle=4.0, perspective=True)
+    variants, report = pp.build_variants(payload, limit=2)
+    assert report.staff_count == 3
+    assert len(variants) == 2
+
+    binarised = next(variant for variant in variants if variant.name == "binarizada")
+    image = cv2.imdecode(np.frombuffer(binarised.png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    # The variant is ink-on-white, so invert before measuring.
+    ink = float((image < 128).mean())
+    assert 0.005 < ink < 0.25, f"implausible ink coverage {ink:.3f}"
+
+
+def test_a_nearly_blank_page_does_not_become_all_ink():
+    """Otsu splits noise on a blank page; the fallback has to catch that."""
+    blank = np.full((700, 1000), 248, np.uint8)
+    blank[300:302, 100:900] = 30  # one lonely rule
+    binary = pp.binarize(blank)
+    assert float((binary > 0).mean()) < 0.4

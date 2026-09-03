@@ -156,8 +156,29 @@ def flatten_illumination(gray: np.ndarray) -> np.ndarray:
 
 
 def binarize(gray: np.ndarray) -> np.ndarray:
-    """Adaptive threshold; returns ink=255 on a black background."""
-    block = max(15, int(min(gray.shape[:2]) * 0.02) | 1)
+    """Threshold to ink=255 on a black background.
+
+    Otsu, not an adaptive threshold. Adaptive thresholding compares each pixel
+    against its own neighbourhood, and a window near the size of a note head
+    means the middle of a filled head is measured against a mean the head
+    itself dominates -- so the interior falls below the threshold and the head
+    comes out as a hollow ring. Every quarter note then looks like a half note
+    to the recogniser, which is a large and completely silent accuracy loss.
+
+    Otsu is safe here precisely because :func:`flatten_illumination` has
+    already removed the lighting gradient that adaptive thresholding exists to
+    cope with. Adaptive remains the fallback for an image where a single
+    threshold cannot separate ink from paper at all.
+    """
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    ink = float((binary > 0).mean())
+    # A sane page is a few percent ink. Far outside that, Otsu has split noise
+    # rather than content -- a nearly blank page, or one with no real contrast.
+    if 0.001 < ink < 0.4:
+        return binary
+
+    # The fallback window is deliberately far wider than a note head.
+    block = max(31, int(min(gray.shape[:2]) * 0.05) | 1)
     return cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block, 12
     )

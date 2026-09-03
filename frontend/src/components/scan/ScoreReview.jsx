@@ -140,18 +140,21 @@ export default function ScoreReview({ piece, index, total, onOpen }) {
 
   return (
     <article className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold text-slate-900">
+      <header className="border-b border-slate-100 px-4 py-3">
+        <div className="mb-2">
+          <h2 className="font-semibold text-slate-900">
             {piece.title || `Pieza ${index + 1}`}
           </h2>
           <p className="text-xs text-slate-400">
             {total > 1 && `Pieza ${index + 1} de ${total} · `}
-            {piece.measures} compases
-            {piece.pages?.length ? ` · páginas ${piece.pages.join(', ')}` : ''}
+            {piece.measures} {piece.measures === 1 ? 'compás' : 'compases'}
+            {piece.pages?.length
+              ? ` · ${piece.pages.length === 1 ? 'página' : 'páginas'} ${piece.pages.join(', ')}`
+              : ''}
           </p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
         <span
           className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
             quality.tone === 'good'
@@ -179,10 +182,11 @@ export default function ScoreReview({ piece, index, total, onOpen }) {
         <button
           type="button"
           onClick={onOpen}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
+          className="ml-auto flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
         >
           Corregir en el editor <ArrowRight size={15} />
         </button>
+        </div>
       </header>
 
       <div className="score-view max-h-72 overflow-auto bg-white px-2 py-3">
@@ -201,7 +205,9 @@ export default function ScoreReview({ piece, index, total, onOpen }) {
         <div className="space-y-1.5 border-t border-slate-100 bg-slate-50/60 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
             Qué conviene revisar
-            {counts.error ? ` · ${counts.error} importante(s)` : ''}
+            {counts.error
+              ? ` · ${counts.error} ${counts.error === 1 ? 'importante' : 'importantes'}`
+              : ''}
           </p>
           {shown.map((warning, position) => {
             const style = SEVERITY[warning.severity] || SEVERITY.info
@@ -222,7 +228,10 @@ export default function ScoreReview({ piece, index, total, onOpen }) {
               onClick={() => setShowAll(true)}
               className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
             >
-              Ver los {warnings.length - shown.length} avisos restantes
+              Ver{' '}
+              {warnings.length - shown.length === 1
+                ? 'el aviso restante'
+                : `los ${warnings.length - shown.length} avisos restantes`}
             </button>
           )}
         </div>

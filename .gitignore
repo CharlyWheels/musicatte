@@ -27,3 +27,7 @@ Thumbs.db
 # IDE
 .vscode
 .idea
+
+# Local end-to-end run artifacts
+backend/e2e.db
+frontend/dist-e2e/
